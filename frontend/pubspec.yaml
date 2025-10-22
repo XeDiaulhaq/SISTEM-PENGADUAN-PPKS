@@ -1,0 +1,17 @@
+name: sistem_pengaduan_ppks
+description: Frontend Flutter Web untuk Sistem Pengaduan Publik Satgas PPKS
+version: 0.1.0
+environment:
+  sdk: '>=2.17.0 <3.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  socket_io_client: ^2.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

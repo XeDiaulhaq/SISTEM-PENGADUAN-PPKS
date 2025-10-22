@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+.env
+/.env
+/backend/venv/
+/backend/recordings/
+/frontend/build/
+/frontend/.dart_tool/
+/frontend/.packages
