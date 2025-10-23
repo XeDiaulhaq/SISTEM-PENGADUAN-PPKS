@@ -4,3 +4,6 @@ eventlet
 opencv-python-headless
 numpy
 python-dotenv
+requests
+matplotlib
+tk
