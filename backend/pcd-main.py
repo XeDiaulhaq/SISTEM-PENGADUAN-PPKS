@@ -169,11 +169,28 @@ def _oddize(n: int) -> int:
     """Return an odd integer >= 3 based on n."""
     n = max(3, int(n))
     return n if (n % 2) == 1 else n + 1
-    """Apply Gaussian blur to image."""
+
+
+def apply_gaussian_blur(image: np.ndarray, kernel_factor: int = 3) -> np.ndarray:
+    """Apply Gaussian blur to an image using a kernel derived from image size.
+
+    kernel_factor: larger values produce smaller kernels (less blur). The
+    kernel size is computed from the smaller image dimension divided by
+    kernel_factor and then made odd and at least 3.
+    """
+    if image is None or image.size == 0:
+        return image
     h, w = image.shape[:2]
-    k = _oddize(max(3, min(h, w) // kernel_factor))
-    # Add check for kernel size validity
-    if k <= 0: return image # Return original if kernel is invalid
+    # Protect against zero or negative kernel_factor
+    try:
+        kf = max(1, int(kernel_factor))
+    except Exception:
+        kf = 3
+    k = _oddize(max(3, min(h, w) // kf))
+    # Ensure k does not exceed image dimensions
+    k = min(k, max(3, min(h, w) if min(h, w) % 2 == 1 else min(h, w) - 1))
+    if k <= 1:
+        return image
     return cv2.GaussianBlur(image, (k, k), 0)
 
 def apply_mosaic_blur(image: np.ndarray, block_size: int = 10) -> np.ndarray:

@@ -44,6 +44,25 @@ output_dir = 'recordings'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
+# Display control: if NO_DISPLAY=1 then run headless (no cv2.imshow / keyboard handling)
+display_enabled = os.environ.get('NO_DISPLAY', '0') != '1'
+
+# Auto-detect if OpenCV was built with GUI support
+if display_enabled:
+    try:
+        cv2.namedWindow('test')
+        cv2.destroyWindow('test')
+        use_cv2_display = True
+    except cv2.error as e:
+        print('⚠️ OpenCV has no GUI support, switching to headless mode')
+        print(f'   Error: {e}')
+        use_cv2_display = False
+        display_enabled = False
+else:
+    use_cv2_display = False
+
+print(f'Display enabled: {display_enabled}')
+
 # --- Helper Functions (Keep these as they are) ---
 def _oddize(n: int) -> int:
     """Return an odd integer >= 3 based on n."""
@@ -172,36 +191,58 @@ while True:
     mode_text = f'Blur: {blur_status} | Rec: {recording_status} | [G]aussian [M]osaic [B]lur ON/OFF [R]ec ON/OFF [Q]uit'
     cv2.putText(img, mode_text, (10, img.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-    cv2.imshow('Face Blur (DNN)', img)
+    # Show frame only when display is enabled
+    if display_enabled:
+        try:
+            cv2.imshow('Face Blur (DNN)', img)
+        except cv2.error as e:
+            print(f"⚠️ Error displaying frame: {e}")
+            display_enabled = False
 
-    # Handle keyboard input (Keep this section as it is)
-    key = cv2.waitKey(1) & 0xff
-    if key == ord('q'):
-        break
-    elif key == ord('g'):
-        blur_type = 'gaussian'
-        blur_enabled = True
-        print("✓ Switched to Gaussian Blur mode (ENABLED)")
-    elif key == ord('m'):
-        blur_type = 'mosaic'
-        blur_enabled = True
-        print("✓ Switched to Mosaic Blur mode (ENABLED)")
-    elif key == ord('b'):
-        blur_enabled = not blur_enabled
-        status = "ENABLED" if blur_enabled else "DISABLED"
-        print(f"✓ Blur {status}")
-    elif key == ord('r'):
-        recording = not recording
-        if recording:
-            if not start_recording(): # Check if recording actually started
-                recording = False # Revert state if failed
-        else:
-            stop_recording()
+        # Handle keyboard input (non-blocking with timeout)
+        key = cv2.waitKey(1) & 0xff
+        if key == ord('q') or key == 27:  # 'q' or ESC to quit
+            print("✓ Quit command received")
+            break
+        elif key == ord('g'):
+            blur_type = 'gaussian'
+            blur_enabled = True
+            print("✓ Switched to Gaussian Blur mode (ENABLED)")
+        elif key == ord('m'):
+            blur_type = 'mosaic'
+            blur_enabled = True
+            print("✓ Switched to Mosaic Blur mode (ENABLED)")
+        elif key == ord('b'):
+            blur_enabled = not blur_enabled
+            status = "ENABLED" if blur_enabled else "DISABLED"
+            print(f"✓ Blur {status}")
+        elif key == ord('r'):
+            recording = not recording
+            if recording:
+                if not start_recording(): # Check if recording actually started
+                    recording = False # Revert state if failed
+            else:
+                stop_recording()
+    else:
+        # Headless mode: still process frames, sleep shortly, and rely on Ctrl+C to stop
+        try:
+            time.sleep(0.01)
+        except KeyboardInterrupt:
+            print("✓ Quit command received")
+            break
 
 # --- Cleanup ---
 if recording:
     stop_recording()
 
 capture.release()
-cv2.destroyAllWindows()
+# Only call destroyAllWindows if display is enabled and OpenCV supports it
+if display_enabled:
+    try:
+        cv2.destroyAllWindows()
+        print("✓ Display windows closed.")
+    except Exception:
+        # Some OpenCV builds (headless) don't implement GUI functions
+        pass
+
 print("✓ Application finished gracefully.")
