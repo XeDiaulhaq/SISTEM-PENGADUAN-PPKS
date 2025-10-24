@@ -3,8 +3,37 @@ __pycache__/
 *.pyc
 .env
 /.env
-/backend/venv/
-/backend/recordings/
-/frontend/build/
-/frontend/.dart_tool/
-/frontend/.packages
+
+backend/.venv/
+backend/recordings/
+frontend/build/
+frontend/.dart_tool/
+frontend/.packages
+
+# Python tooling
+/.python-version
+
+# Editor directories
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Model binaries (keep text/model definitions but ignore large binaries)
+*.caffemodel
+*.pb
+*.onnx
+*.tflite
+*.h5
+*.ckpt
+models/*.bin
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
