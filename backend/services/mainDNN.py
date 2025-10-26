@@ -3,12 +3,15 @@ import cv2
 import numpy as np
 from datetime import datetime
 import os
-import base64
-import requests
 import time
-import argparse
-import threading
-from collections import deque
+
+"""
+mainDNN.py
+-----------
+Local prototype script for quick testing of face detection and blur using OpenCV.
+Intended for local experiments (e.g., webcam).
+Not optimized for production or server use.
+"""
 
 # --- DNN Model Configuration ---
 prototxt_path = "models/deploy.prototxt.txt"
@@ -24,87 +27,17 @@ except cv2.error as e:
     print("Make sure 'deploy.prototxt.txt' and 'res10_300x300_ssd_iter_140000.caffemodel' exist.")
     sys.exit(1)
 
-# --- Command line args (allow using file/video as source) ---
-parser = argparse.ArgumentParser(description='pcd-main: face blur and optional frame uploader')
-parser.add_argument('--source', '-s', help='Path to image or video file to use instead of webcam')
-parser.add_argument('--device', '-d', help='Camera device index (0,1,...) or path (/dev/video0). Overrides default camera when no --source provided')
-parser.add_argument('--no-upload', action='store_true', help="Don't send frames to BACKEND_URL (for local testing)")
-args = parser.parse_args()
-
 # --- Camera and Settings ---
-capture = None
-image_source = None
-if args.source:
-    src = args.source
-    if not os.path.exists(src):
-        print(f"✗ Source not found: {src}")
-        sys.exit(1)
-    # If source is an image, load it once and reuse
-    if os.path.splitext(src)[1].lower() in ('.jpg', '.jpeg', '.png', '.bmp'):
-        image_source = cv2.imread(src)
-        if image_source is None:
-            print(f"✗ Failed to read image: {src}")
-            sys.exit(1)
-        print(f"Using image file as source: {src}")
-        frame_width = int(image_source.shape[1])
-        frame_height = int(image_source.shape[0])
-        fps = 1
-    else:
-        capture = cv2.VideoCapture(src)
-        if not capture.isOpened():
-            print("✗ Error: could not open video file. Check the path and codecs.")
-            sys.exit(1)
-        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(capture.get(cv2.CAP_PROP_FPS)) or 30
-        print(f"Using video file as source: {src}")
-else:
-    # If user provided --device use it, otherwise default to 0
-    device = args.device
-    if device is None:
-        device = 0
-    else:
-        # try convert numeric strings to int index
-        try:
-            device = int(device)
-        except Exception:
-            # leave as string path like '/dev/video0'
-            pass
+capture = cv2.VideoCapture(0)
 
-    def try_open_camera(dev):
-        cap = cv2.VideoCapture(dev)
-        if cap.isOpened():
-            return cap, dev
-        try:
-            cap.release()
-        except Exception:
-            pass
-        return None, None
+if not capture.isOpened():
+    print("✗ Error: could not open video capture. Check your camera.")
+    sys.exit(1)
 
-    cap, used = try_open_camera(device)
-    # If specified device failed and device is numeric index, try scanning 0..4
-    if cap is None and isinstance(device, int):
-        print(f"⚠️ Failed to open device index {device}, scanning indices 0..4 for available camera...")
-        for i in range(0, 5):
-            cap_try, used_try = try_open_camera(i)
-            if cap_try is not None:
-                cap = cap_try
-                used = used_try
-                print(f"✓ Found camera at index {i}")
-                break
-
-    if cap is None:
-        print(f"✗ Error: could not open video capture (device={device}). Check your camera and permissions.")
-        print("If you don't have a camera, run with --source path/to/image.jpg or use tools/send_sample.py")
-        # Extra diagnostics suggestion
-        print("Run 'ls -l /dev/video*' and 'v4l2-ctl --list-devices' (install v4l-utils) to inspect devices")
-        sys.exit(1)
-
-    capture = cap
-    device = used
-    frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(capture.get(cv2.CAP_PROP_FPS)) or 30
+# Get camera properties for video writer
+frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+fps = int(capture.get(cv2.CAP_PROP_FPS)) or 30
 
 # Blur type selection
 blur_type = 'gaussian'  # 'gaussian', 'mosaic', or 'none'
@@ -122,47 +55,21 @@ if not os.path.exists(output_dir):
 # Display control: if NO_DISPLAY=1 then run headless (no cv2.imshow / keyboard handling)
 display_enabled = os.environ.get('NO_DISPLAY', '0') != '1'
 
-# Auto-detect if OpenCV was built with GUI support. If cv2.imshow would fail,
-# switch to headless mode automatically.
+# Auto-detect if OpenCV was built with GUI support
 if display_enabled:
     try:
         cv2.namedWindow('test')
         cv2.destroyWindow('test')
         use_cv2_display = True
-    except cv2.error:
-        print('⚠️ OpenCV has no GUI support, switching to matplotlib mode')
+    except cv2.error as e:
+        print('⚠️ OpenCV has no GUI support, switching to headless mode')
+        print(f'   Error: {e}')
         use_cv2_display = False
+        display_enabled = False
 else:
     use_cv2_display = False
 
-# Try to use matplotlib as fallback for display
-use_matplotlib = False
-if display_enabled and not use_cv2_display:
-    try:
-        import matplotlib
-        matplotlib.use('TkAgg')  # Use TkAgg backend for better compatibility
-        import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        import tkinter as tk
-        use_matplotlib = True
-        print('✓ Using Matplotlib with Tkinter for display')
-    except ImportError as e:
-        print(f'⚠️ Matplotlib/Tkinter not available: {e}')
-        use_matplotlib = False
-        display_enabled = False
-
-print(f'Display enabled: {display_enabled} | Method: {"OpenCV" if use_cv2_display else ("Matplotlib" if use_matplotlib else "None")}')
-
-# Initialize window name for display
-WINDOW_NAME = 'Face Blur Detection (DNN) - Press Q to Quit'
-
-# Frame queue for matplotlib display (thread-safe)
-frame_queue = deque(maxlen=2)
-frame_lock = threading.Lock()
-matplotlib_window = None
-matplotlib_fig = None
-matplotlib_ax = None
-stop_display_thread = False
+print(f'Display enabled: {display_enabled}')
 
 # --- Helper Functions (Keep these as they are) ---
 def _oddize(n: int) -> int:
@@ -170,27 +77,12 @@ def _oddize(n: int) -> int:
     n = max(3, int(n))
     return n if (n % 2) == 1 else n + 1
 
-
 def apply_gaussian_blur(image: np.ndarray, kernel_factor: int = 3) -> np.ndarray:
-    """Apply Gaussian blur to an image using a kernel derived from image size.
-
-    kernel_factor: larger values produce smaller kernels (less blur). The
-    kernel size is computed from the smaller image dimension divided by
-    kernel_factor and then made odd and at least 3.
-    """
-    if image is None or image.size == 0:
-        return image
+    """Apply Gaussian blur to image."""
     h, w = image.shape[:2]
-    # Protect against zero or negative kernel_factor
-    try:
-        kf = max(1, int(kernel_factor))
-    except Exception:
-        kf = 3
-    k = _oddize(max(3, min(h, w) // kf))
-    # Ensure k does not exceed image dimensions
-    k = min(k, max(3, min(h, w) if min(h, w) % 2 == 1 else min(h, w) - 1))
-    if k <= 1:
-        return image
+    k = _oddize(max(3, min(h, w) // kernel_factor))
+    # Add check for kernel size validity
+    if k <= 0: return image # Return original if kernel is invalid
     return cv2.GaussianBlur(image, (k, k), 0)
 
 def apply_mosaic_blur(image: np.ndarray, block_size: int = 10) -> np.ndarray:
@@ -226,32 +118,11 @@ def stop_recording():
         video_writer = None
         print("✓ Recording stopped")
 
-
-def send_frame_to_backend(img: np.ndarray):
-    """Encode frame as JPEG base64 and POST to backend /upload_frame if BACKEND_URL is set."""
-    backend_url = os.environ.get('BACKEND_URL')
-    if not backend_url:
-        return False
-    try:
-        _, buffer = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        jpg_b64 = base64.b64encode(buffer).decode('ascii')
-        payload = {'image': jpg_b64}
-        resp = requests.post(f'{backend_url.rstrip('/')}/upload_frame', json=payload, timeout=2.0)
-        return resp.ok
-    except Exception as e:
-        print(f"✗ Failed to send frame to backend: {e}")
-        return False
-
 # --- Main Loop ---
-loop_count = 0
 while True:
-    if image_source is not None:
-        img = image_source.copy()
-        success = True
-    else:
-        success, img = capture.read()
+    success, img = capture.read()
     if not success or img is None:
-        print("Warning: failed to read frame. Exiting.")
+        print("Warning: failed to read frame from camera. Exiting.")
         break
 
     # Apply mirror/flip (always enabled)
@@ -328,22 +199,13 @@ while True:
     mode_text = f'Blur: {blur_status} | Rec: {recording_status} | [G]aussian [M]osaic [B]lur ON/OFF [R]ec ON/OFF [Q]uit'
     cv2.putText(img, mode_text, (10, img.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-    # Show frame only when display is enabled. In headless mode we skip GUI and
-    # keyboard handling so the script can run on servers or when OpenCV lacks GUI support.
+    # Show frame only when display is enabled
     if display_enabled:
         try:
-            cv2.imshow(WINDOW_NAME, img)
+            cv2.imshow('Face Blur (DNN)', img)
         except cv2.error as e:
             print(f"⚠️ Error displaying frame: {e}")
             display_enabled = False
-
-        # Best-effort: send frame to backend so web clients can receive it via Socket.IO
-        # Enable by setting environment variable: BACKEND_URL=http://localhost:5000
-        try:
-            if not args.no_upload:
-                send_frame_to_backend(img)
-        except Exception:
-            pass
 
         # Handle keyboard input (non-blocking with timeout)
         key = cv2.waitKey(1) & 0xff
@@ -370,28 +232,18 @@ while True:
             else:
                 stop_recording()
     else:
-        # Headless mode: still send frames to backend, sleep shortly, and rely on Ctrl+C to stop
-        try:
-            if not args.no_upload:
-                send_frame_to_backend(img)
-        except Exception:
-            pass
+        # Headless mode: still process frames, sleep shortly, and rely on Ctrl+C to stop
         try:
             time.sleep(0.01)
         except KeyboardInterrupt:
+            print("✓ Quit command received")
             break
 
 # --- Cleanup ---
 if recording:
     stop_recording()
 
-# Release capture if it exists
-try:
-    if capture is not None:
-        capture.release()
-except Exception:
-    pass
-
+capture.release()
 # Only call destroyAllWindows if display is enabled and OpenCV supports it
 if display_enabled:
     try:
