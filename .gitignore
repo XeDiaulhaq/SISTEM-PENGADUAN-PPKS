@@ -25,13 +25,11 @@ frontend/.packages
 *.sqlite3
 
 # Model binaries (keep text/model definitions but ignore large binaries)
-*.caffemodel
 *.pb
 *.onnx
 *.tflite
 *.h5
 *.ckpt
-models/*.bin
 
 # Distribution / packaging
 build/
