@@ -11,9 +11,11 @@ Handles:
 from flask import Flask, send_from_directory, jsonify, request
 from flask_socketio import SocketIO
 import os
+import subprocess
+import sys
 
-# Import fungsi blur dari modul PCD
-from services.pcd_main import process_frame_base64
+# Import modul pcd sebagai modul, jangan import fungsi yang memicu eksekusi loop pada import
+from services import pcd_main
 
 # --- Flask App Config ---
 app = Flask(__name__)
@@ -72,11 +74,11 @@ def upload_frame():
 
         img_b64 = data['image']
 
-        # 🔹 Proses frame menggunakan modul PCD
-        processed_b64 = process_frame_base64(img_b64)
+        # 🔹 Proses frame menggunakan modul PCD (modul pcd_main)
+        processed_b64 = pcd_main.process_frame_base64(img_b64)
 
-        # 🔹 Broadcast hasil blur ke semua klien (event: 'processed_frame')
-        socketio.emit('processed_frame', {'image': processed_b64})
+        # 🔹 Broadcast hasil blur ke semua klien (event name 'frame' expected by frontend)
+        socketio.emit('frame', {'image': processed_b64})
 
         print("→ Frame processed and broadcast to clients.")
         return jsonify({'status': 'processed'}), 200
@@ -87,6 +89,44 @@ def upload_frame():
 
 
 # --- Run Server ---
+def _start_pcd_subprocess():
+    """Start pcd_main.py as a separate subprocess.
+
+    This keeps camera/OpenCV work in a separate process and avoids blocking the Flask server.
+    Returns the subprocess.Popen object or None on failure.
+    """
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'services', 'pcd_main.py'))
+    if not os.path.exists(script_path):
+        print(f"✗ pcd script not found: {script_path}")
+        return None
+
+    env = os.environ.copy()
+    # Ensure pcd uploads frames to this backend
+    env.setdefault('BACKEND_URL', 'http://127.0.0.1:5000')
+    # Inherit NO_DISPLAY from the parent environment; default to '0' so GUI shows
+    env['NO_DISPLAY'] = os.environ.get('NO_DISPLAY', '0')
+    print(f"Starting pcd subprocess with NO_DISPLAY={env['NO_DISPLAY']}")
+
+    try:
+        proc = subprocess.Popen([sys.executable, script_path], env=env, cwd=os.path.dirname(__file__))
+        print(f"✓ Started pcd subprocess (pid={proc.pid})")
+        return proc
+    except Exception as e:
+        print('✗ Failed to start pcd subprocess:', e)
+        return None
+
+
 if __name__ == '__main__':
     print("🚀 Flask PCD backend running on http://0.0.0.0:5000")
-    socketio.run(app, host='0.0.0.0', port=5000)
+    # Start PCD in a separate process so it runs alongside the server
+    pcd_proc = _start_pcd_subprocess()
+    try:
+        socketio.run(app, host='0.0.0.0', port=5000)
+    finally:
+        # Try to gracefully terminate the pcd subprocess when server stops
+        try:
+            if pcd_proc is not None:
+                print('Shutting down pcd subprocess...')
+                pcd_proc.terminate()
+        except Exception:
+            pass
