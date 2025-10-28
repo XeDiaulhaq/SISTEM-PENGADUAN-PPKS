@@ -28,7 +28,7 @@ Sistem ini memungkinkan pelaporan kejadian ke Satgas PPKS dengan perekaman video
 ## Prasyarat
 - Python 3.9+
 - Flutter SDK untuk target Web
-- PostgreSQL atau database relasional (opsional)
+- PostgreSQL atau database relasional (opsional).
 
 ## Cara menjalankan (dev)
 Catatan: instruksi di bawah ini untuk lingkungan pengembangan. Periksa `backend/requirements.txt` dan `frontend/pubspec.yaml` untuk detail dependensi.
@@ -56,7 +56,7 @@ flutter run -d chrome
 - backend/: kode server (Flask, pemrosesan video, penyimpanan)
 - database/: skema SQL dan skrip migrasi
 - frontend/: aplikasi Flutter (Web)
-- web/: aset web statis (jika ada)
+- web/: aset web statis (jika ada).
 
 ## Pengembangan & kontribusi
 1. Fork repository ini.
@@ -69,10 +69,10 @@ Catatan keamanan:
 - Batasi akses ke file video melalui autentikasi dan aturan hak akses.
 
 ## Tim
-- Muhammad Dhia Ulhaq — Program PCD
-- Wildanul Hakim — Backend
-- M. Akmal — Frontend
-- Fauzi Syahril Harahap — UI/UX
+- Muhammad Dhia Ulhaq — Program PCD.
+- Wildanul Hakim — Backend.
+- M. Akmal — Frontend.
+- Fauzi Syahril Harahap — UI/UX.
 
 ## Lisensi
 Lisensi proyek: (sebutkan lisensi yang relevan, mis. MIT) — tambahkan file `LICENSE` jika perlu.
