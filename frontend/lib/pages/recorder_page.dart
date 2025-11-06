@@ -7,7 +7,7 @@ class RecorderPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Center(
       child: Text(
-        'Halaman Recorder',
+        'Halaman Recorder eyy',
         style: TextStyle(fontSize: 24),
       ),
     );

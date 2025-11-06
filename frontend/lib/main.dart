@@ -40,27 +40,22 @@ class _MyAppState extends State<MyApp> {
               toggleTheme: toggleTheme,
             ),
         '/recorder': (context) => MainScaffold(
-              page: const RecorderPage(),
+              page: RecorderPage(), // jangan const
               isDark: isDark,
               toggleTheme: toggleTheme,
             ),
-
-        // ✅ FIX di sini
         '/login': (context) => MainScaffold(
               page: LoginPage(
                 onLogin: () {
-                  // Arahkan ke dashboard setelah login berhasil
                   Navigator.pushReplacementNamed(context, '/dashboard');
                 },
                 onBackHome: () {
-                  // Kembali ke halaman beranda
                   Navigator.popUntil(context, ModalRoute.withName('/home'));
                 },
               ),
               isDark: isDark,
               toggleTheme: toggleTheme,
             ),
-
         '/dashboard': (context) => MainScaffold(
               page: const DashboardPage(),
               isDark: isDark,
@@ -91,7 +86,7 @@ class MainScaffold extends StatelessWidget {
         isDarkMode: isDark,
         onToggleTheme: toggleTheme,
         onLogin: () => Navigator.pushNamed(context, '/login'),
-        onRecorder: () => Navigator.pushNamed(context, '/recorder'),
+        onRecorder: () => Navigator.pushReplacementNamed(context, '/recorder'),
       ),
       body: page,
     );
