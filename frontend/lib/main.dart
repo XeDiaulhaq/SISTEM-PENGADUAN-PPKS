@@ -1,94 +1,99 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'theme/app_theme.dart';
+import 'widgets/custom_app_bar.dart';
+import 'pages/home_page.dart';
+import 'pages/recorder_page.dart';
+import 'pages/login_page.dart';
+import 'pages/dashboard_page.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  bool isDark = false;
+
+  void toggleTheme() {
+    setState(() => isDark = !isDark);
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sistem Pengaduan PPKS',
-      home: const StreamViewer(),
+      title: 'SPM Satgas PPKPT',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
+      initialRoute: '/home',
+      routes: {
+        '/home': (context) => MainScaffold(
+              page: const HomePage(),
+              isDark: isDark,
+              toggleTheme: toggleTheme,
+            ),
+        '/recorder': (context) => MainScaffold(
+              page: const RecorderPage(),
+              isDark: isDark,
+              toggleTheme: toggleTheme,
+            ),
+
+        // ✅ FIX di sini
+        '/login': (context) => MainScaffold(
+              page: LoginPage(
+                onLogin: () {
+                  // Arahkan ke dashboard setelah login berhasil
+                  Navigator.pushReplacementNamed(context, '/dashboard');
+                },
+                onBackHome: () {
+                  // Kembali ke halaman beranda
+                  Navigator.popUntil(context, ModalRoute.withName('/home'));
+                },
+              ),
+              isDark: isDark,
+              toggleTheme: toggleTheme,
+            ),
+
+        '/dashboard': (context) => MainScaffold(
+              page: const DashboardPage(),
+              isDark: isDark,
+              toggleTheme: toggleTheme,
+            ),
+      },
     );
   }
 }
 
-class StreamViewer extends StatefulWidget {
-  const StreamViewer({super.key});
+/// Scaffold utama yang menampilkan AppBar + body halaman
+class MainScaffold extends StatelessWidget {
+  final Widget page;
+  final bool isDark;
+  final VoidCallback toggleTheme;
 
-  @override
-  State<StreamViewer> createState() => _StreamViewerState();
-}
-
-class _StreamViewerState extends State<StreamViewer> {
-  IO.Socket? socket;
-  Uint8List? latestImage;
-
-  @override
-  void initState() {
-    super.initState();
-    _connectSocket();
-  }
-
-  void _connectSocket() {
-  // Development: explicitly connect to backend service on port 5000.
-  // Using the origin port (e.g. Flutter dev server) caused the client to try
-  // connecting to the wrong port (no SocketIO server there). Set this to
-  // your backend if different (e.g. on a remote host).
-  final host = 'http://localhost:5000';
-
-    socket = IO.io(host, IO.OptionBuilder()
-        .setTransports(['websocket'])
-        .disableAutoConnect()
-        .build());
-
-    socket!.onConnect((_) {
-      debugPrint('Socket connected to $host');
-      // Also print to browser console when running web
-      print('Socket connected to $host');
-    });
-
-    socket!.on('frame', (data) {
-      try {
-        final b64 = data['image'] as String?;
-        if (b64 != null && b64.isNotEmpty) {
-          final bytes = base64Decode(b64);
-          setState(() {
-            latestImage = bytes;
-          });
-        }
-      } catch (e) {
-        debugPrint('Failed to decode frame: $e');
-        print('Failed to decode frame: $e');
-      }
-    });
-
-    socket!.onDisconnect((_) => debugPrint('Socket disconnected'));
-    socket!.connect();
-  }
-
-  @override
-  void dispose() {
-    socket?.dispose();
-    super.dispose();
-  }
+  const MainScaffold({
+    super.key,
+    required this.page,
+    required this.isDark,
+    required this.toggleTheme,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Live Camera Stream')),
-      body: Center(
-        child: latestImage == null
-            ? const Text('Waiting for frames...')
-            : Image.memory(latestImage!),
+      appBar: CustomAppBar(
+        isDarkMode: isDark,
+        onToggleTheme: toggleTheme,
+        onLogin: () => Navigator.pushNamed(context, '/login'),
+        onRecorder: () => Navigator.pushNamed(context, '/recorder'),
       ),
+      body: page,
     );
   }
 }
