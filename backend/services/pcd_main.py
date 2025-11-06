@@ -20,13 +20,26 @@ Includes robust error handling and logging.
 """
 
 # --- DNN Model Configuration ---
-prototxt_path = "models/deploy.prototxt.txt"
-model_path = "models/res10_300x300_ssd_iter_140000.caffemodel"
+# Get the backend directory (parent of services directory)
+_BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+prototxt_path = os.path.join(_BACKEND_DIR, "models/deploy.prototxt.txt")
+model_path = os.path.join(_BACKEND_DIR, "models/res10_300x300_ssd_iter_140000.caffemodel")
 confidence_threshold = 0.5  # Minimum probability to filter weak detections
 
 # --- Load the DNN Model (kept at module import so process_frame_base64 dapat digunakan)
 try:
     net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+    # Try to use OpenCL FP16 if available for speed; fallback to CPU
+    try:
+        net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        try:
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_OPENCL_FP16)
+            print("✓ DNN target: OpenCL FP16")
+        except Exception:
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            print("ℹ️ DNN target: CPU")
+    except Exception:
+        pass
     print("✓ DNN face detection model loaded successfully.")
 except cv2.error as e:
     print(f"✗ Error loading DNN model: {e}")
@@ -118,15 +131,33 @@ def main(argv=None):
             print("✓ Recording stopped")
 
     def send_frame_to_backend(img: np.ndarray):
-        """Encode frame as JPEG base64 and POST to backend /upload_frame if BACKEND_URL is set."""
+        """Encode frame as JPEG base64 and POST to backend /upload_frame if BACKEND_URL is set.
+
+        Tunable via env vars:
+         - UPLOAD_MAX_WIDTH (int, default 640): resize width while keeping aspect ratio
+         - UPLOAD_JPEG_QUALITY (int, default 60): JPEG quality
+        """
         backend_url = os.environ.get('BACKEND_URL')
         if not backend_url:
             return False
         try:
-            _, buffer = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            up_max_w = int(os.environ.get('UPLOAD_MAX_WIDTH', '640'))
+            jpg_q = int(os.environ.get('UPLOAD_JPEG_QUALITY', '60'))
+
+            frame_to_send = img
+            # Resize to reduce bandwidth if wider than target
+            try:
+                if up_max_w > 0 and frame_to_send.shape[1] > up_max_w:
+                    ratio = up_max_w / float(frame_to_send.shape[1])
+                    new_h = max(1, int(frame_to_send.shape[0] * ratio))
+                    frame_to_send = cv2.resize(frame_to_send, (up_max_w, new_h), interpolation=cv2.INTER_AREA)
+            except Exception:
+                pass
+
+            _, buffer = cv2.imencode('.jpg', frame_to_send, [int(cv2.IMWRITE_JPEG_QUALITY), max(30, min(95, jpg_q))])
             jpg_b64 = base64.b64encode(buffer).decode('ascii')
             payload = {'image': jpg_b64}
-            resp = requests.post(f'{backend_url.rstrip('/')}/upload_frame', json=payload, timeout=2.0)
+            resp = requests.post(f"{backend_url.rstrip('/')}/upload_frame", json=payload, timeout=2.0)
             return resp.ok
         except Exception as e:
             print(f"✗ Failed to send frame to backend: {e}")
@@ -207,8 +238,8 @@ def main(argv=None):
         frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(capture.get(cv2.CAP_PROP_FPS)) or 30
 
-    # Blur type selection
-    blur_type = 'gaussian'  # 'gaussian', 'mosaic', or 'none'
+    # Blur type selection (env override: BLUR_TYPE)
+    blur_type = os.environ.get('BLUR_TYPE', 'mosaic').lower()  # 'gaussian', 'mosaic', or 'none'
     blur_enabled = True  # Toggle blur on/off
 
     # Video recording setting
@@ -222,37 +253,21 @@ def main(argv=None):
 
     # Display control: if NO_DISPLAY=1 then run headless (no cv2.imshow / keyboard handling)
     display_enabled = os.environ.get('NO_DISPLAY', '0') != '1'
+    use_cv2_display = False
 
-    # Auto-detect if OpenCV was built with GUI support. If cv2.imshow would fail,
-    # switch to headless mode automatically.
     if display_enabled:
         try:
-            cv2.namedWindow('test')
-            cv2.destroyWindow('test')
+            cv2.namedWindow('pcd_display_probe')
+            cv2.destroyWindow('pcd_display_probe')
             use_cv2_display = True
-        except cv2.error:
-            print('⚠️ OpenCV has no GUI support, switching to matplotlib mode')
+            print('✓ OpenCV GUI tersedia, akan menampilkan jendela.')
+        except cv2.error as e:
+            print('⚠️ OpenCV tidak memiliki dukungan GUI (detail: {})'.format(e))
+            print('⚠️ Install paket "opencv-python" (bukan headless) jika ingin menampilkan jendela.')
             use_cv2_display = False
-    else:
-        use_cv2_display = False
 
-    # Try to use matplotlib as fallback for display
-    use_matplotlib = False
-    if display_enabled and not use_cv2_display:
-        try:
-            import matplotlib
-            matplotlib.use('TkAgg')  # Use TkAgg backend for better compatibility
-            import matplotlib.pyplot as plt
-            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-            import tkinter as tk
-            use_matplotlib = True
-            print('✓ Using Matplotlib with Tkinter for display')
-        except ImportError as e:
-            print(f'⚠️ Matplotlib/Tkinter not available: {e}')
-            use_matplotlib = False
-            display_enabled = False
-
-        print(f'Display enabled: {display_enabled} | Method: {"OpenCV" if use_cv2_display else ("Matplotlib" if use_matplotlib else "None")}')
+    if not use_cv2_display:
+        print('ℹ️ Mode headless aktif. Set NO_DISPLAY=0 dan pastikan paket GUI tersedia untuk menampilkan jendela.')
 
     # Initialize window name for display
     WINDOW_NAME = 'Face Blur Detection (DNN) - Press Q to Quit'
@@ -260,6 +275,12 @@ def main(argv=None):
     # Frame queue for matplotlib display (thread-safe)
     # --- Main Loop ---
     loop_count = 0
+    upload_every_n = int(os.environ.get('UPLOAD_EVERY_N', '1'))  # send every Nth frame
+    # Reuse detections between frames to reduce DNN calls (persist across frames)
+    detect_every_n = int(os.environ.get('DETECT_EVERY_N', '2'))
+    max_box_age = int(os.environ.get('MAX_BOX_AGE', '5'))
+    last_boxes = []  # list of (startX, startY, endX, endY)
+    last_boxes_age = 0
     while True:
         if image_source is not None:
             img = image_source.copy()
@@ -273,59 +294,66 @@ def main(argv=None):
         # Apply mirror/flip (always enabled)
         img = cv2.flip(img, 1)
 
-        # --- DNN Face Detection ---
-        (h, w) = img.shape[:2] # Frame height and width
-        # Create blob: Resize to 300x300, apply mean subtraction (values specific to this model)
-        blob = cv2.dnn.blobFromImage(cv2.resize(img, (300, 300)), 1.0,
-            (300, 300), (104.0, 177.0, 123.0))
+        # --- DNN Face Detection (every N frames) ---
+        (h, w) = img.shape[:2]  # Frame height and width
 
-        # Pass blob through network
-        net.setInput(blob)
-        detections = net.forward()
+        def _blur_boxes_on_img(boxes):
+            nonlocal img
+            if not blur_enabled or blur_type == 'none':
+                return
+            for (startX, startY, endX, endY) in boxes:
+                # ensure bounds
+                sx = max(0, min(startX, w-1)); ex = max(0, min(endX, w))
+                sy = max(0, min(startY, h-1)); ey = max(0, min(endY, h))
+                if ex <= sx or ey <= sy:
+                    continue
+                face_roi = img[sy:ey, sx:ex]
+                if face_roi.size <= 0:
+                    continue
+                if blur_type == 'gaussian':
+                    box_w = ex - sx
+                    k_factor = 3
+                    _ = _oddize(max(3, box_w // k_factor))
+                    blurred = apply_gaussian_blur(face_roi, kernel_factor=k_factor)
+                elif blur_type == 'mosaic':
+                    mosaic_block_size = max(3, (ex - sx) // 15)
+                    blurred = apply_mosaic_blur(face_roi, block_size=mosaic_block_size)
+                else:
+                    blurred = face_roi
+                img[sy:ey, sx:ex] = blurred
 
-        face_found = False # Flag to check if any face was detected in this frame
+        run_detection = (detect_every_n <= 1) or ((loop_count % detect_every_n) == 0)
+        if run_detection:
+            blob = cv2.dnn.blobFromImage(cv2.resize(img, (300, 300)), 1.0,
+                (300, 300), (104.0, 177.0, 123.0))
+            net.setInput(blob)
+            detections = net.forward()
 
-        # Loop over the detections
-        for i in range(0, detections.shape[2]):
-            # Extract confidence
-            confidence = detections[0, 0, i, 2]
+            current_boxes = []
+            for i in range(0, detections.shape[2]):
+                confidence = detections[0, 0, i, 2]
+                if confidence > confidence_threshold:
+                    box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                    (startX, startY, endX, endY) = box.astype("int")
+                    startX = max(0, startX)
+                    startY = max(0, startY)
+                    endX = min(w, endX)
+                    endY = min(h, endY)
+                    if endX > startX and endY > startY:
+                        current_boxes.append((startX, startY, endX, endY))
 
-            # Filter out weak detections
-            if confidence > confidence_threshold:
+            last_boxes = current_boxes
+            last_boxes_age = 0
+            _blur_boxes_on_img(last_boxes)
+            face_found = len(current_boxes) > 0
+        else:
+            # reuse previous boxes for a few frames
+            if last_boxes and last_boxes_age < max_box_age:
+                _blur_boxes_on_img(last_boxes)
+                last_boxes_age += 1
                 face_found = True
-                # Compute coordinates of the bounding box
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                (startX, startY, endX, endY) = box.astype("int")
-
-                # Ensure bounding box is within frame boundaries
-                startX = max(0, startX)
-                startY = max(0, startY)
-                endX = min(w, endX)
-                endY = min(h, endY)
-
-                # Extract face ROI
-                face_roi = img[startY:endY, startX:endX]
-
-                # Check if ROI is valid before blurring
-                if face_roi.size > 0:
-                    # Apply blur if enabled
-                    if blur_enabled:
-                        box_w = endX - startX # Width of the detected face box
-                        if blur_type == 'gaussian':
-                            # Use box width for kernel calculation
-                            k_factor = 3
-                            # Adjust kernel size calculation
-                            k = _oddize(max(3, box_w // k_factor))
-                            blurred = apply_gaussian_blur(face_roi, kernel_factor=k_factor) # Pass k_factor instead
-                        elif blur_type == 'mosaic':
-                            # Use box width for block size calculation
-                            mosaic_block_size = max(3, box_w // 15)
-                            blurred = apply_mosaic_blur(face_roi, block_size=mosaic_block_size)
-                        else: # 'none' or unknown
-                            blurred = face_roi # No blurring if type is 'none' or invalid
-
-                        # Put blurred face back into the frame
-                        img[startY:endY, startX:endX] = blurred
+            else:
+                face_found = False
 
         # Display "No Face Found" if applicable
         if not face_found:
@@ -341,25 +369,22 @@ def main(argv=None):
         mode_text = f'Blur: {blur_status} | Rec: {recording_status} | [G]aussian [M]osaic [B]lur ON/OFF [R]ec ON/OFF [Q]uit'
         cv2.putText(img, mode_text, (10, img.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-        # Show frame only when display is enabled. In headless mode we skip GUI and
-        # keyboard handling so the script can run on servers or when OpenCV lacks GUI support.
-        if display_enabled:
+        # Best-effort: send frame to backend with downsampling to reduce bandwidth/latency
+        try:
+            if not args.no_upload and (upload_every_n <= 1 or (loop_count % upload_every_n) == 0):
+                send_frame_to_backend(img)
+        except Exception:
+            pass
+
+        if display_enabled and use_cv2_display:
             try:
                 cv2.imshow(WINDOW_NAME, img)
+                key = cv2.waitKey(1) & 0xff
             except cv2.error as e:
-                print(f"⚠️ Error displaying frame: {e}")
+                print(f"⚠️ Error menampilkan frame: {e}. Menonaktifkan display.")
                 display_enabled = False
-
-            # Best-effort: send frame to backend so web clients can receive it via Socket.IO
-            # Enable by setting environment variable: BACKEND_URL=http://localhost:5000
-            try:
-                if not args.no_upload:
-                    send_frame_to_backend(img)
-            except Exception:
-                pass
-
-            # Handle keyboard input (non-blocking with timeout)
-            key = cv2.waitKey(1) & 0xff
+                use_cv2_display = False
+                key = -1
             if key == ord('q') or key == 27:  # 'q' or ESC to quit
                 print("✓ Quit command received")
                 break
@@ -378,21 +403,18 @@ def main(argv=None):
             elif key == ord('r'):
                 recording = not recording
                 if recording:
-                    if not start_recording(): # Check if recording actually started
-                        recording = False # Revert state if failed
+                    if not start_recording():  # Check if recording actually started
+                        recording = False  # Revert state if failed
                 else:
                     stop_recording()
         else:
-            # Headless mode: still send frames to backend, sleep shortly, and rely on Ctrl+C to stop
+            # Headless mode: sleep ringan dan lanjut loop
             try:
-                if not args.no_upload:
-                    send_frame_to_backend(img)
-            except Exception:
-                pass
-            try:
-                time.sleep(0.01)
+                time.sleep(0.005)
             except KeyboardInterrupt:
                 break
+
+        loop_count += 1
 
     # --- Cleanup ---
     if recording:
