@@ -1,9 +1,15 @@
 flask
 flask-socketio
 eventlet
-opencv-python-headless
+opencv-python
 numpy
 python-dotenv
 requests
 matplotlib
 tk
+fastapi
+uvicorn[standard]
+SQLAlchemy>=2.0
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic>=2
