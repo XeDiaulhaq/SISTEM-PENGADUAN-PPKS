@@ -10,7 +10,7 @@ class HomePage extends StatelessWidget {
       backgroundColor: Colors.grey[50],
       body: SingleChildScrollView(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 60),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final isWide = constraints.maxWidth > 800;
@@ -32,7 +32,7 @@ class HomePage extends StatelessWidget {
                                 color: Colors.black87,
                               ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 4),
                         Text(
                           "Satgas PPKPT PNL",
                           style: Theme.of(context).textTheme.displaySmall?.copyWith(
@@ -40,7 +40,7 @@ class HomePage extends StatelessWidget {
                                 color: Colors.black,
                               ),
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 16),
                         const Text(
                           "Satuan Tugas Pencegahan dan Penanganan Kekerasan "
                           "Perguruan Tinggi Politeknik Negeri Lhokseumawe (Satgas PPKPT PNL) "
@@ -55,14 +55,14 @@ class HomePage extends StatelessWidget {
                             height: 1.6,
                           ),
                         ),
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 24),
                         ElevatedButton.icon(
                           onPressed: () {
                             Navigator.pushNamed(context, '/recorder');
                           },
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 28, vertical: 16),
+                                horizontal: 24, vertical: 14),
                             backgroundColor: Colors.black,
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
@@ -82,7 +82,7 @@ class HomePage extends StatelessWidget {
                     ),
                   ),
 
-                  if (isWide) const SizedBox(width: 60) else const SizedBox(height: 40),
+                  if (isWide) const SizedBox(width: 40) else const SizedBox(height: 32),
 
                   // Bagian kanan: gambar hero
                   Expanded(
@@ -93,10 +93,10 @@ class HomePage extends StatelessWidget {
                         // Efek blur belakang
                         Container(
                           width: double.infinity,
-                          height: isWide ? 400 : 300,
+                          height: isWide ? 360 : 280,
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(30),
+                            borderRadius: BorderRadius.circular(24),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.05),
@@ -112,7 +112,7 @@ class HomePage extends StatelessWidget {
                           child: Image.asset(
                             'assets/images/hero_banner.png',
                             width: double.infinity,
-                            height: isWide ? 380 : 280,
+                            height: isWide ? 340 : 260,
                             fit: BoxFit.cover,
                           ),
                         ),

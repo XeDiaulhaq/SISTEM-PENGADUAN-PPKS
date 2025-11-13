@@ -54,9 +54,8 @@ class _DashboardPageState extends State<DashboardPage> {
     });
 
     if (mounted) {
-      final statusText = newStatus == VideoStatus.processing
-          ? 'Sedang Diproses'
-          : 'Selesai';
+      final statusText =
+          newStatus == VideoStatus.processing ? 'Sedang Diproses' : 'Selesai';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Status laporan diubah menjadi "$statusText"'),
@@ -79,9 +78,7 @@ class _DashboardPageState extends State<DashboardPage> {
             .where((v) => v.status == VideoStatus.processing)
             .toList();
       case VideoFilter.completed:
-        return _videos
-            .where((v) => v.status == VideoStatus.completed)
-            .toList();
+        return _videos.where((v) => v.status == VideoStatus.completed).toList();
       case VideoFilter.all:
       default:
         return _videos;
@@ -149,13 +146,16 @@ class _DashboardPageState extends State<DashboardPage> {
       child: SingleChildScrollView(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1280), // max-w-7xl = 80rem = 1280px
+            constraints: const BoxConstraints(
+                maxWidth: 1280), // max-w-7xl = 80rem = 1280px
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0), // px-4 = 1rem = 16px
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0), // px-4 = 1rem = 16px
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(height: 60), // pt-20 = 5rem = 80px (lebih kecil)
+                  const SizedBox(
+                      height: 60), // pt-20 = 5rem = 80px (lebih kecil)
                   // Header
                   Text(
                     'Dashboard',
@@ -170,26 +170,31 @@ class _DashboardPageState extends State<DashboardPage> {
                     'Monitor dan kelola laporan yang masuk dari mahasiswa',
                     style: TextStyle(
                       fontSize: 16, // Lebih kecil
-                      color: isDark ? const Color(0xFFA3A3A3) : const Color(0xFF737373),
+                      color: isDark
+                          ? const Color(0xFFA3A3A3)
+                          : const Color(0xFF737373),
                     ),
                   ),
-                  const SizedBox(height: 24), // mb-6 = 1.5rem = 24px (lebih kecil)
+                  const SizedBox(
+                      height: 24), // mb-6 = 1.5rem = 24px (lebih kecil)
 
                   // Stats Grid
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final crossAxisCount = constraints.maxWidth > 1024 // lg breakpoint
-                          ? 4
-                          : constraints.maxWidth > 768 // md breakpoint
-                              ? 2
-                              : 1;
+                      final crossAxisCount =
+                          constraints.maxWidth > 1024 // lg breakpoint
+                              ? 4
+                              : constraints.maxWidth > 768 // md breakpoint
+                                  ? 2
+                                  : 1;
                       return GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
-                          crossAxisSpacing: 12, // gap-3 = 0.75rem = 12px (lebih compact)
-                          mainAxisSpacing: 12,  // gap-3 = 0.75rem = 12px
+                          crossAxisSpacing:
+                              12, // gap-3 = 0.75rem = 12px (lebih compact)
+                          mainAxisSpacing: 12, // gap-3 = 0.75rem = 12px
                           childAspectRatio: 2.0, // Lebih landscape lagi
                         ),
                         itemCount: stats.length,
@@ -209,7 +214,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                 borderRadius: BorderRadius.circular(12),
                                 border: isFirst
                                     ? Border.all(
-                                        color: const Color(0xFF3B82F6), // Blue border for first card
+                                        color: const Color(
+                                            0xFF3B82F6), // Blue border for first card
                                         width: 2,
                                       )
                                     : isSelected
@@ -233,7 +239,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ],
                               ),
                               child: Padding(
-                                padding: const EdgeInsets.all(16.0), // Padding lebih compact
+                                padding: const EdgeInsets.all(
+                                    16.0), // Padding lebih compact
                                 child: Row(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
@@ -291,7 +298,8 @@ class _DashboardPageState extends State<DashboardPage> {
                       );
                     },
                   ),
-                  const SizedBox(height: 20), // mb-5 = 1.25rem = 20px (lebih kecil)
+                  const SizedBox(
+                      height: 20), // mb-5 = 1.25rem = 20px (lebih kecil)
 
                   // Video List Card
                   Container(
@@ -312,7 +320,8 @@ class _DashboardPageState extends State<DashboardPage> {
                       ],
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.all(20.0), // p-5 = 1.25rem = 20px (lebih compact)
+                      padding: const EdgeInsets.all(
+                          20.0), // p-5 = 1.25rem = 20px (lebih compact)
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -329,8 +338,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                       style: TextStyle(
                                         fontSize: 20, // Lebih kecil
                                         fontWeight: FontWeight.w600,
-                                        color:
-                                            isDark ? Colors.white : Colors.black,
+                                        color: isDark
+                                            ? Colors.white
+                                            : Colors.black,
                                       ),
                                     ),
                                     if (_filter != VideoFilter.all)
@@ -380,7 +390,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                             ],
                           ),
-                          const SizedBox(height: 16), // mb-4 = 1rem = 16px (lebih kecil)
+                          const SizedBox(
+                              height: 16), // mb-4 = 1rem = 16px (lebih kecil)
 
                           // Video List
                           if (_filteredVideos.isEmpty)
@@ -390,8 +401,9 @@ class _DashboardPageState extends State<DashboardPage> {
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
                               itemCount: _filteredVideos.length,
-                              separatorBuilder: (context, index) =>
-                                  const SizedBox(height: 12), // space-y-3 = 0.75rem = 12px (lebih kecil)
+                              separatorBuilder: (context, index) => const SizedBox(
+                                  height:
+                                      12), // space-y-3 = 0.75rem = 12px (lebih kecil)
                               itemBuilder: (context, index) {
                                 final video = _filteredVideos[index];
                                 return VideoCard(
@@ -407,7 +419,8 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 40), // pb-10 = 2.5rem = 40px (lebih kecil)
+                  const SizedBox(
+                      height: 40), // pb-10 = 2.5rem = 40px (lebih kecil)
                 ],
               ),
             ),
@@ -436,7 +449,8 @@ class _DashboardPageState extends State<DashboardPage> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w500,
-                color: isDark ? const Color(0xFFA3A3A3) : const Color(0xFF737373),
+                color:
+                    isDark ? const Color(0xFFA3A3A3) : const Color(0xFF737373),
               ),
               textAlign: TextAlign.center,
             ),
@@ -447,7 +461,8 @@ class _DashboardPageState extends State<DashboardPage> {
                   : 'Coba pilih filter lain atau reset filter',
               style: TextStyle(
                 fontSize: 14, // text-sm
-                color: isDark ? const Color(0xFF737373) : const Color(0xFFA3A3A3),
+                color:
+                    isDark ? const Color(0xFF737373) : const Color(0xFFA3A3A3),
               ),
               textAlign: TextAlign.center,
             ),
@@ -711,7 +726,8 @@ class VideoCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusBadge(BuildContext context, VideoStatus status, bool isMobile) {
+  Widget _buildStatusBadge(
+      BuildContext context, VideoStatus status, bool isMobile) {
     Color color;
     IconData icon;
     String text;
@@ -746,7 +762,9 @@ class VideoCard extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: isMobile ? 11 : 13, color: Colors.white), // w-3 h-3 / w-4 h-4
+          Icon(icon,
+              size: isMobile ? 11 : 13,
+              color: Colors.white), // w-3 h-3 / w-4 h-4
           SizedBox(width: isMobile ? 3 : 4), // gap-1 / gap-1.5
           Text(
             text,
@@ -866,7 +884,8 @@ class VideoDetailDialog extends StatelessWidget {
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(16),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 700), // max-w-4xl max-h-[90vh]
+        constraints: const BoxConstraints(
+            maxWidth: 900, maxHeight: 700), // max-w-4xl max-h-[90vh]
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF171717) : Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -994,8 +1013,7 @@ class VideoDetailDialog extends StatelessWidget {
                           ),
                           const SizedBox(height: 16),
                           _buildInfoRow(Icons.videocam, video.filename),
-                          _buildInfoRow(
-                              Icons.calendar_today, video.uploadDate),
+                          _buildInfoRow(Icons.calendar_today, video.uploadDate),
                           _buildInfoRow(Icons.access_time, video.uploadTime),
                           _buildInfoRow(Icons.storage, video.size),
                           if (video.blurType != null)

@@ -19,23 +19,23 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight + 10);
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 
   @override
   Widget build(BuildContext context) {
     final textColor = isDarkMode ? Colors.white : Colors.black87;
 
     return AppBar(
-      elevation: 2,
+      elevation: 1,
       backgroundColor: isDarkMode ? Colors.black : Colors.white,
-      titleSpacing: 16,
+      titleSpacing: 12,
       automaticallyImplyLeading: false,
       title: Row(
         children: [
           // 🔹 Logo di kiri atas
           Image.asset(
             'assets/images/logo.png',
-            height: 36,
+            height: 32,
           ),
           const SizedBox(width: 8),
           Text(
@@ -43,16 +43,16 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
             style: TextStyle(
               color: textColor,
               fontWeight: FontWeight.bold,
-              fontSize: 18,
+              fontSize: 16,
             ),
           ),
           if (isAdmin) ...[
             const SizedBox(width: 6),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               decoration: BoxDecoration(
                 color: isDarkMode ? Colors.white : Colors.black,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 "Admin",
@@ -108,7 +108,8 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: isDarkMode ? Colors.white : Colors.black,
                         foregroundColor: isDarkMode ? Colors.black : Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                        minimumSize: const Size(0, 32),
                       ),
                       child: const Text("Mulai"),
                     ),
