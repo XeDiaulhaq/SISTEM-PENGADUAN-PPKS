@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/terms_dialog.dart';
+import '../widgets/footer.dart';
 
 class RecorderPage extends StatefulWidget {
   const RecorderPage({super.key});
@@ -244,10 +245,14 @@ class _RecorderPageState extends State<RecorderPage> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
               Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: Row(
@@ -729,10 +734,15 @@ class _RecorderPageState extends State<RecorderPage> {
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
+                      const SizedBox(height: 12),
+                      const Footer(),
+                    ],
+                  ), // Column
+                ), // Padding
+              ), // ConstrainedBox
+            ), // Center
+          ), // SingleChildScrollView
+        ), // SafeArea
+      ); // Scaffold
   }
 }

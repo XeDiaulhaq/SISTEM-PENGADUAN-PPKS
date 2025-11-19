@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'theme/app_theme.dart';
 import 'widgets/custom_app_bar.dart';
+import 'widgets/app_state_scope.dart';
 import 'pages/home_page.dart';
 import 'pages/recorder_page.dart';
 import 'pages/login_page.dart';
@@ -88,7 +89,11 @@ class MainScaffold extends StatelessWidget {
         onLogin: () => Navigator.pushNamed(context, '/login'),
         onRecorder: () => Navigator.pushReplacementNamed(context, '/recorder'),
       ),
-      body: page,
+      body: AppStateScope(
+        isDark: isDark,
+        toggleTheme: toggleTheme,
+        child: page,
+      ),
     );
   }
 }
