@@ -18,5 +18,8 @@ class Settings:
     ADMIN_SEED_USERNAME: str | None = os.getenv("ADMIN_SEED_USERNAME")
     ADMIN_SEED_PASSWORD: str | None = os.getenv("ADMIN_SEED_PASSWORD")
 
+    # Report ingest API (digunakan oleh services/pcd_main.py)
+    REPORT_API_KEY: str | None = os.getenv("REPORT_API_KEY")
+
 
 settings = Settings()

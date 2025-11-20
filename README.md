@@ -28,7 +28,24 @@ Sistem ini memungkinkan pelaporan kejadian ke Satgas PPKS dengan perekaman video
 ## Prasyarat
 - Python 3.9+
 - Flutter SDK untuk target Web
-- PostgreSQL atau database relasional (opsional).
+- MySQL 8.x (atau RDBMS lain yang kompatibel dengan SQLAlchemy).
+
+### Setup Database (MySQL)
+1. Salin `.env.example` menjadi `.env` dan sesuaikan `DATABASE_URL`, `REPORT_API_KEY`, dan variabel lainnya.
+2. Buat database + tabel awal dengan skrip `database/mysql/schema.sql`:
+
+	```bash
+	mysql -u root -p < database/mysql/schema.sql
+	```
+
+3. Pastikan driver MySQL (`pymysql`) terinstal saat menjalankan `pip install -r backend/requirements.txt`.
+4. Jalankan FastAPI (`uvicorn backend.fastapi.main:app --port 65514`) dan pastikan log menampilkan koneksi sukses ke database MySQL.
+
+### Variabel lingkungan penting
+- `BACKEND_URL`: alamat Flask blur backend yang menerima `/upload_frame`.
+- `REPORT_API_URL`: endpoint FastAPI untuk mencatat metadata rekaman (mis. `http://localhost:65514/reports`).
+- `REPORT_API_KEY`: token sederhana untuk mengamankan endpoint ingest.
+- `REPORT_TITLE_PREFIX` & `REPORT_SUBMITTED_BY` (opsional): kustomisasi judul laporan dan identitas pengirim ketika `services/pcd_main.py` mengirim metadata.
 
 ## Cara menjalankan (dev)
 Catatan: instruksi di bawah ini untuk lingkungan pengembangan. Periksa `backend/requirements.txt` dan `frontend/pubspec.yaml` untuk detail dependensi.
