@@ -67,7 +67,44 @@ def main(argv=None):
     # These are defined here so they can access main's local state (video_writer, etc.)
     video_writer = None
     recording = False
-    output_dir = 'recordings'
+    current_recording_path = None
+    recording_started_at = None
+    output_dir = os.path.join(_BACKEND_DIR, 'recordings')
+
+    def _notify_report_backend(file_path: str | None, started_at: datetime | None, ended_at: datetime | None):
+        """Send metadata about a completed recording to FastAPI reports endpoint."""
+        api_url = os.environ.get('REPORT_API_URL')
+        if not api_url or not file_path:
+            return
+
+        try:
+            payload = {
+                'title': os.environ.get('REPORT_TITLE_PREFIX', 'Laporan PPKS') + ' ' + datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                'recording_path': file_path.replace('\\', '/'),
+                'status': 'new',
+                'duration_seconds': None,
+                'submitted_by': os.environ.get('REPORT_SUBMITTED_BY', 'pcd_main'),
+                'captured_at': started_at.isoformat() if started_at else None,
+            }
+            if started_at and ended_at and ended_at >= started_at:
+                payload['duration_seconds'] = int((ended_at - started_at).total_seconds())
+
+            headers = {'Content-Type': 'application/json'}
+            api_key = os.environ.get('REPORT_API_KEY')
+            if api_key:
+                headers['X-Report-Api-Key'] = api_key
+
+            resp = requests.post(api_url.rstrip('/'), json=payload, headers=headers, timeout=5)
+            if resp.ok:
+                try:
+                    resp_payload = resp.json()
+                except ValueError:
+                    resp_payload = {}
+                print(f"✓ Report metadata sent (id={resp_payload.get('id')})")
+            else:
+                print(f"✗ Failed to send report metadata (status={resp.status_code}): {resp.text}")
+        except Exception as exc:
+            print(f"✗ Exception sending report metadata: {exc}")
 
     def _oddize(n: int) -> int:
         """Return an odd integer >= 3 based on n."""
@@ -99,7 +136,7 @@ def main(argv=None):
         return mosaic
 
     def start_recording():
-        nonlocal video_writer, recording
+        nonlocal video_writer, recording, current_recording_path, recording_started_at
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -109,6 +146,8 @@ def main(argv=None):
             vw = cv2.VideoWriter(filename, fourcc, fps, (frame_width, frame_height))
             if vw.isOpened():
                 video_writer = vw
+                current_recording_path = filename
+                recording_started_at = datetime.utcnow()
                 print(f"✓ Recording started: {filename}")
                 return True
             else:
@@ -121,7 +160,8 @@ def main(argv=None):
             return False
 
     def stop_recording():
-        nonlocal video_writer, recording
+        nonlocal video_writer, recording, current_recording_path, recording_started_at
+        finished_at = datetime.utcnow()
         if video_writer is not None:
             try:
                 video_writer.release()
@@ -129,6 +169,13 @@ def main(argv=None):
                 pass
             video_writer = None
             print("✓ Recording stopped")
+        if current_recording_path:
+            rel_path = os.path.relpath(current_recording_path, _BACKEND_DIR)
+        else:
+            rel_path = None
+        _notify_report_backend(rel_path, recording_started_at, finished_at)
+        current_recording_path = None
+        recording_started_at = None
 
     def send_frame_to_backend(img: np.ndarray):
         """Encode frame as JPEG base64 and POST to backend /upload_frame if BACKEND_URL is set.
@@ -245,7 +292,6 @@ def main(argv=None):
     # Video recording setting
     recording = False  # Toggle video recording
     video_writer = None
-    output_dir = 'recordings'
 
     # Create output directory if it doesn't exist
     if not os.path.exists(output_dir):
