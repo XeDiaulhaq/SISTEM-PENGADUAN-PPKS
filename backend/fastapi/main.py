@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from .db import engine, Base, SessionLocal
 from .models import Admin
 from .routers import auth as auth_router
+from .routers import reports as reports_router
 from .config import settings
 from .security import hash_password
 
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
 
     # Registrasi router
     app.include_router(auth_router.router)
+    app.include_router(reports_router.router)
 
     @app.get("/")
     def root():
