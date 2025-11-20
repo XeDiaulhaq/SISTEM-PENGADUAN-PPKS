@@ -10,6 +10,20 @@ import argparse
 import threading
 from collections import deque
 
+try:
+    from services.audio_recorder import AudioRecorder
+except ImportError:  # fallback kalau dijalankan via `python services/pcd_main.py`
+    from audio_recorder import AudioRecorder
+
+# Try to import the centralized merge utility (works when running from backend/)
+try:
+    from services.merge_audio_video import merge_audio_video as _central_merge_fn
+except Exception:
+    try:
+        from backend.services.merge_audio_video import merge_audio_video as _central_merge_fn
+    except Exception:
+        _central_merge_fn = None
+
 """
 pcd_main.py
 ------------
@@ -63,11 +77,29 @@ def main(argv=None):
     """
     args = _parse_args(argv)
 
+    def _parse_audio_device(value):
+        if value is None:
+            return None
+        value = str(value).strip()
+        if not value:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return value
+
     # --- Helper utilities (local to main) ---
     # These are defined here so they can access main's local state (video_writer, etc.)
     video_writer = None
     recording = False
     output_dir = 'recordings'
+    audio_recorder = None
+    audio_enabled = os.environ.get('ENABLE_AUDIO', '1') != '0'
+    audio_device_pref = _parse_audio_device(os.environ.get('AUDIO_DEVICE') or os.environ.get('AUDIO_DEVICE_INDEX'))
+    
+    # Current video and audio file paths (for merging)
+    current_video_file = None
+    current_audio_file = None
 
     def _oddize(n: int) -> int:
         """Return an odd integer >= 3 based on n."""
@@ -98,8 +130,103 @@ def main(argv=None):
         mosaic = cv2.resize(temp, (w, h), interpolation=cv2.INTER_NEAREST)
         return mosaic
 
+    def _start_audio_recording():
+        """Start microphone capture if the feature is enabled.
+
+        Sets `current_audio_file` to the path returned by the recorder so the
+        merge step knows which file to use.
+        """
+        nonlocal audio_recorder, current_audio_file
+        if not audio_enabled or audio_recorder is None:
+            return
+        if audio_recorder.is_recording:
+            # already recording; ensure current_audio_file is populated
+            current_audio_file = getattr(audio_recorder, 'output_path', None)
+            return
+        try:
+            path = audio_recorder.start()
+            current_audio_file = path
+            print(f"✓ Audio recording started: {path}")
+        except Exception as exc:
+            print(f"✗ Failed to start audio recording: {exc}")
+
+    def _stop_audio_recording():
+        nonlocal audio_recorder
+        if audio_recorder is None or not audio_recorder.is_recording:
+            return
+        try:
+            path = audio_recorder.stop()
+            if path:
+                print(f"✓ Audio saved to: {path}")
+                return path
+        except Exception as exc:
+            print(f"✗ Failed to stop audio recording cleanly: {exc}")
+        return None
+
+    def _merge_audio_video(video_file, audio_file):
+        """Merge audio+video.
+
+        Prefer the centralized `merge_audio_video` function (if available) which
+        handles ffmpeg detection robustly. Otherwise fall back to a local
+        subprocess ffmpeg merge.
+        """
+        # Basic checks
+        if not os.path.exists(video_file) or not os.path.exists(audio_file):
+            return False
+
+        # 1) Try central merge function (from merge_audio_video.py)
+        if _central_merge_fn is not None:
+            try:
+                # central function signature: merge_audio_video(video, audio, output)
+                out = video_file  # overwrite original video file with merged result
+                success = _central_merge_fn(video_file, audio_file, out)
+                return bool(success)
+            except Exception as e:
+                print(f"⚠️ Central merge function failed: {e}")
+
+        # 2) Fallback: local ffmpeg subprocess
+        try:
+            import subprocess
+            # Ensure ffmpeg available
+            try:
+                subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+            except Exception:
+                print("⚠️ ffmpeg not available for fallback merge")
+                return False
+
+            base_name = os.path.splitext(video_file)[0]
+            merged_file = base_name + '_merged.mp4'
+            cmd = [
+                'ffmpeg', '-y', '-i', video_file, '-i', audio_file,
+                '-c:v', 'copy', '-c:a', 'aac', '-shortest', merged_file
+            ]
+            print(f"✓ Merging audio with video (fallback)...")
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            if res.returncode == 0 and os.path.exists(merged_file):
+                try:
+                    os.replace(merged_file, video_file)
+                except Exception:
+                    try:
+                        os.remove(video_file)
+                        os.rename(merged_file, video_file)
+                    except Exception:
+                        pass
+                # Optionally remove audio file
+                try:
+                    os.remove(audio_file)
+                except Exception:
+                    pass
+                print(f"✓ Merged and replaced: {video_file}")
+                return True
+            else:
+                print(f"⚠️ Fallback merge failed: {res.stderr if hasattr(res, 'stderr') else res}")
+                return False
+        except Exception as e:
+            print(f"⚠️ Error during fallback merge: {e}")
+            return False
+
     def start_recording():
-        nonlocal video_writer, recording
+        nonlocal video_writer, recording, current_video_file, current_audio_file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -109,19 +236,30 @@ def main(argv=None):
             vw = cv2.VideoWriter(filename, fourcc, fps, (frame_width, frame_height))
             if vw.isOpened():
                 video_writer = vw
+                current_video_file = filename
                 print(f"✓ Recording started: {filename}")
+                # Ensure audio filename matches video timestamp so merging is straightforward
+                try:
+                    if audio_recorder is not None:
+                        # set prefix to include same timestamp
+                        audio_recorder.filename_prefix = f"audio_capture_{timestamp}"
+                except Exception:
+                    pass
+                _start_audio_recording()
                 return True
             else:
                 print("✗ Failed to start recording")
                 video_writer = None
+                current_video_file = None
                 return False
         except Exception as e:
             print(f"✗ Exception starting recording: {e}")
             video_writer = None
+            current_video_file = None
             return False
 
     def stop_recording():
-        nonlocal video_writer, recording
+        nonlocal video_writer, recording, current_video_file, current_audio_file
         if video_writer is not None:
             try:
                 video_writer.release()
@@ -129,6 +267,33 @@ def main(argv=None):
                 pass
             video_writer = None
             print("✓ Recording stopped")
+        
+        # Stop audio and get the audio file path
+        audio_path = _stop_audio_recording()
+
+        # Wait briefly for audio to be flushed and present on disk (retry a few times)
+        if audio_path is None and current_audio_file:
+            audio_path = current_audio_file
+
+        # Retry loop: wait up to ~3 seconds for audio file to exist
+        attempts = 0
+        while attempts < 6 and (audio_path is None or not os.path.exists(audio_path)):
+            time.sleep(0.5)
+            attempts += 1
+            if current_audio_file and os.path.exists(current_audio_file):
+                audio_path = current_audio_file
+
+        # Merge audio with video if both exist
+        if current_video_file and audio_path:
+            if os.path.exists(current_video_file) and os.path.exists(audio_path):
+                merged_ok = _merge_audio_video(current_video_file, audio_path)
+                if not merged_ok:
+                    print("⚠️ Automatic merge failed; files kept for manual inspection:")
+                    print(f"   Video: {current_video_file}")
+                    print(f"   Audio: {audio_path}")
+
+        current_video_file = None
+        current_audio_file = None
 
     def send_frame_to_backend(img: np.ndarray):
         """Encode frame as JPEG base64 and POST to backend /upload_frame if BACKEND_URL is set.
@@ -268,6 +433,16 @@ def main(argv=None):
 
     if not use_cv2_display:
         print('ℹ️ Mode headless aktif. Set NO_DISPLAY=0 dan pastikan paket GUI tersedia untuk menampilkan jendela.')
+
+    # --- Initialize Audio Recorder at startup ---
+    if audio_enabled:
+        try:
+            audio_recorder = AudioRecorder(device=audio_device_pref)
+            print(f"✓ Audio recorder initialized (device preference: {audio_device_pref})")
+        except Exception as exc:
+            print(f"⚠️ Failed to initialize audio recorder: {exc}")
+            audio_recorder = None
+            audio_enabled = False
 
     # Initialize window name for display
     WINDOW_NAME = 'Face Blur Detection (DNN) - Press Q to Quit'
@@ -419,6 +594,8 @@ def main(argv=None):
     # --- Cleanup ---
     if recording:
         stop_recording()
+    else:
+        _stop_audio_recording()
 
     # Release capture if it exists
     try:
