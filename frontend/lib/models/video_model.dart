@@ -1,5 +1,6 @@
 class VideoModel {
   final String id;
+  final String title;
   final String filename;
   final String uploadDate;
   final String uploadTime;
@@ -14,6 +15,7 @@ class VideoModel {
 
   VideoModel({
     required this.id,
+    required this.title,
     required this.filename,
     required this.uploadDate,
     required this.uploadTime,
@@ -29,6 +31,7 @@ class VideoModel {
 
   VideoModel copyWith({
     String? id,
+    String? title,
     String? filename,
     String? uploadDate,
     String? uploadTime,
@@ -43,6 +46,7 @@ class VideoModel {
   }) {
     return VideoModel(
       id: id ?? this.id,
+      title: title ?? this.title,
       filename: filename ?? this.filename,
       uploadDate: uploadDate ?? this.uploadDate,
       uploadTime: uploadTime ?? this.uploadTime,
@@ -60,6 +64,7 @@ class VideoModel {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'title': title,
       'filename': filename,
       'uploadDate': uploadDate,
       'uploadTime': uploadTime,
@@ -77,6 +82,7 @@ class VideoModel {
   factory VideoModel.fromJson(Map<String, dynamic> json) {
     return VideoModel(
       id: json['id'],
+      title: json['title'] ?? '',
       filename: json['filename'],
       uploadDate: json['uploadDate'],
       uploadTime: json['uploadTime'],

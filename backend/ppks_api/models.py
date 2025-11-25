@@ -28,11 +28,13 @@ class Report(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     recording_path: Mapped[str] = mapped_column(String(500), nullable=False)
     thumbnail_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default=ReportStatus.NEW.value, server_default=ReportStatus.NEW.value)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     submitted_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reporter_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     captured_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), default=datetime.utcnow)

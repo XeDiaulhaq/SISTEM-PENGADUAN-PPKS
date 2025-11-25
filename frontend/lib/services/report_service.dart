@@ -63,18 +63,28 @@ class ReportService {
 
     return VideoModel(
       id: json['id'].toString(),
+      title: (json['title'] as String?)?.trim().isNotEmpty == true
+          ? (json['title'] as String)
+          : 'Tanpa Judul',
       filename: filename,
       uploadDate: _formatDate(createdAt),
       uploadTime: _formatTime(createdAt),
       size: duration is num ? '${duration}s' : '-',
       status: _statusFromApi(json['status'] as String?),
       blurType: null,
-      location: json['title'] as String?,
-      description: (json['notes'] as String?) ?? json['title'] as String?,
-      email: json['submitted_by'] as String?,
-      phone: null,
+      location: _nullableString(json['location']),
+      description: (json['notes'] as String?) ?? (json['title'] as String?),
+      email: _nullableString(json['submitted_by']),
+      phone: _nullableString(json['reporter_phone']),
       videoUrl: recordingPath,
     );
+  }
+
+  String? _nullableString(dynamic value) {
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+    return null;
   }
 
   VideoStatus _statusFromApi(String? status) {

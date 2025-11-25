@@ -52,6 +52,7 @@ class VideoStorageService {
     return [
       VideoModel(
         id: '1',
+        title: 'Pelecehan Verbal di Koridor',
         filename: 'Laporan_Pelecehan_Verbal_Kampus.webm',
         uploadDate: _formatDate(now),
         uploadTime: '09:15:30',
@@ -66,6 +67,7 @@ class VideoStorageService {
       ),
       VideoModel(
         id: '2',
+        title: 'Intimidasi di Ruang Kelas',
         filename: 'Laporan_Intimidasi_Ruang_Kelas.webm',
         uploadDate: _formatDate(now),
         uploadTime: '10:45:12',
@@ -76,9 +78,11 @@ class VideoStorageService {
         description:
             'Mahasiswa mengalami intimidasi dan ancaman dari sekelompok mahasiswa lain di dalam kelas.',
         email: 'reporter@student.pnl.ac.id',
+        phone: '0811111111',
       ),
       VideoModel(
         id: '3',
+        title: 'Kekerasan di Area Parkir',
         filename: 'Laporan_Kekerasan_Area_Parkir.webm',
         uploadDate: _formatDate(yesterday),
         uploadTime: '14:20:45',

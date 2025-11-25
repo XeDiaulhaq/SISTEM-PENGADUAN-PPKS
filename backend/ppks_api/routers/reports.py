@@ -35,11 +35,13 @@ def ingest_report(
     status_value = (payload.status or ReportStatus.NEW).value
     report = Report(
         title=payload.title,
+        location=payload.location,
         recording_path=payload.recording_path,
         thumbnail_path=payload.thumbnail_path,
         status=status_value,
         duration_seconds=payload.duration_seconds,
         submitted_by=payload.submitted_by,
+        reporter_phone=payload.reporter_phone,
         notes=payload.notes,
         captured_at=payload.captured_at,
     )

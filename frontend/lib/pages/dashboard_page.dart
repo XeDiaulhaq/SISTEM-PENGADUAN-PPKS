@@ -681,7 +681,7 @@ class VideoCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        video.filename,
+                        video.title.isNotEmpty ? video.title : video.filename,
                         style: TextStyle(
                           fontSize: isMobile ? 14 : 15, // text-sm md:text-base
                           fontWeight: FontWeight.w600,
@@ -690,6 +690,21 @@ class VideoCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      if (video.title != video.filename && video.filename.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            video.filename,
+                            style: TextStyle(
+                              fontSize: isMobile ? 11 : 12,
+                              color: isDark
+                                  ? const Color(0xFF9CA3AF)
+                                  : const Color(0xFF6B7280),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       const SizedBox(height: 6), // mb-1.5
                       Wrap(
                         spacing: isMobile ? 8 : 10, // gap-2 md:gap-3
@@ -710,6 +725,18 @@ class VideoCard extends StatelessWidget {
                             video.size,
                             isMobile,
                           ),
+                          if (video.location != null)
+                            _buildInfoChip(
+                              Icons.location_on,
+                              video.location!,
+                              isMobile,
+                            ),
+                          if (video.phone != null)
+                            _buildInfoChip(
+                              Icons.phone,
+                              video.phone!,
+                              isMobile,
+                            ),
                           if (video.blurType != null)
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -1113,6 +1140,7 @@ class VideoDetailDialog extends StatelessWidget {
                           ),
                           const SizedBox(height: 16),
                           _buildInfoRow(Icons.videocam, video.filename),
+                          _buildInfoRow(Icons.title, video.title),
                           _buildInfoRow(Icons.calendar_today, video.uploadDate),
                           _buildInfoRow(Icons.access_time, video.uploadTime),
                           _buildInfoRow(Icons.storage, video.size),
@@ -1154,7 +1182,7 @@ class VideoDetailDialog extends StatelessWidget {
                     if (video.email != null || video.phone != null) ...[
                       _buildSection(
                         context,
-                        'Informasi Kontak Pelapor (Opsional)',
+                        'Informasi Kontak Pelapor',
                         Icons.contact_phone,
                         Colors.green,
                         Column(
