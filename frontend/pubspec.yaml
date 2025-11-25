@@ -15,6 +15,7 @@ dependencies:
   shared_preferences: ^2.2.2
   camera: ^0.10.5+9
   image_picker: ^1.0.7
+  http: ^1.2.1
 
 dev_dependencies:
   flutter_test:

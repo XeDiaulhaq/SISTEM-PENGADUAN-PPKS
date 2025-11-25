@@ -6,6 +6,7 @@ import 'pages/home_page.dart';
 import 'pages/recorder_page.dart';
 import 'pages/login_page.dart';
 import 'pages/dashboard_page.dart';
+import 'services/auth_storage.dart';
 
 void main() {
   runApp(const MyApp());
@@ -20,9 +21,19 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   bool isDark = false;
+  final AuthStorage _authStorage = AuthStorage();
 
   void toggleTheme() {
     setState(() => isDark = !isDark);
+  }
+
+  Future<void> _handleLogout(BuildContext context) async {
+    await _authStorage.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      '/login',
+      ModalRoute.withName('/home'),
+    );
   }
 
   @override
@@ -61,6 +72,10 @@ class _MyAppState extends State<MyApp> {
               page: const DashboardPage(),
               isDark: isDark,
               toggleTheme: toggleTheme,
+              isAdmin: true,
+              onLogout: () {
+                _handleLogout(context);
+              },
             ),
       },
     );
@@ -72,12 +87,16 @@ class MainScaffold extends StatelessWidget {
   final Widget page;
   final bool isDark;
   final VoidCallback toggleTheme;
+  final bool isAdmin;
+  final VoidCallback? onLogout;
 
   const MainScaffold({
     super.key,
     required this.page,
     required this.isDark,
     required this.toggleTheme,
+    this.isAdmin = false,
+    this.onLogout,
   });
 
   @override
@@ -88,6 +107,8 @@ class MainScaffold extends StatelessWidget {
         onToggleTheme: toggleTheme,
         onLogin: () => Navigator.pushNamed(context, '/login'),
         onRecorder: () => Navigator.pushReplacementNamed(context, '/recorder'),
+        isAdmin: isAdmin,
+        onLogout: onLogout,
       ),
       body: AppStateScope(
         isDark: isDark,

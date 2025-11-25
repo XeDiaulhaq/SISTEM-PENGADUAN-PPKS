@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/video_model.dart';
-import '../services/video_storage_service.dart';
+import '../services/auth_storage.dart';
+import '../services/report_service.dart';
+import '../services/api_exceptions.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -11,11 +13,27 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final VideoStorageService _storageService = VideoStorageService();
+  final ReportService _reportService = ReportService();
+  final AuthStorage _authStorage = AuthStorage();
   List<VideoModel> _videos = [];
   VideoFilter _filter = VideoFilter.all;
   Timer? _refreshTimer;
   bool _isLoading = true;
+  bool _isFetching = false;
+  bool _redirecting = false;
+  String? _errorMessage;
+  String? _currentToken;
+
+  String get _todayKey {
+    final now = DateTime.now();
+    return _formatDateKey(now);
+  }
+
+  String _formatDateKey(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    return '$day/$month/${date.year}';
+  }
 
   // Getter untuk dark mode detection
   bool get isDark => Theme.of(context).brightness == Brightness.dark;
@@ -37,23 +55,56 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _loadVideos() async {
-    final videos = await _storageService.loadVideos();
-    if (mounted) {
+    if (_isFetching) return;
+    _isFetching = true;
+
+    final token = await _authStorage.getValidToken();
+    if (token == null) {
+      _isFetching = false;
+      await _handleUnauthorized('Sesi login berakhir. Silakan login ulang.');
+      return;
+    }
+
+    try {
+      final videos = await _reportService.fetchReports(token);
+      if (!mounted) return;
       setState(() {
+        _currentToken = token;
         _videos = videos;
         _isLoading = false;
+        _errorMessage = null;
       });
+    } on UnauthorizedException catch (e) {
+      await _handleUnauthorized(e.message);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Gagal memuat laporan';
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memuat laporan: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      _isFetching = false;
     }
   }
 
   Future<void> _updateVideoStatus(String id, VideoStatus newStatus) async {
-    final updatedVideos =
-        await _storageService.updateVideoStatus(_videos, id, newStatus);
-    setState(() {
-      _videos = updatedVideos;
-    });
+    final token = _currentToken ?? await _authStorage.getValidToken();
+    if (token == null) {
+      await _handleUnauthorized('Sesi login berakhir. Silakan login ulang.');
+      return;
+    }
 
-    if (mounted) {
+    try {
+      await _reportService.updateReportStatus(token, id, newStatus);
+      await _loadVideos();
+      if (!mounted) return;
       final statusText =
           newStatus == VideoStatus.processing ? 'Sedang Diproses' : 'Selesai';
       ScaffoldMessenger.of(context).showSnackBar(
@@ -63,12 +114,39 @@ class _DashboardPageState extends State<DashboardPage> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+    } on UnauthorizedException catch (e) {
+      await _handleUnauthorized(e.message);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memperbarui status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
+  Future<void> _handleUnauthorized(String? message) async {
+    if (_redirecting) return;
+    _redirecting = true;
+    _refreshTimer?.cancel();
+    await _authStorage.clear();
+    if (!mounted) return;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+    Navigator.of(context).pushReplacementNamed('/login');
+  }
+
   List<VideoModel> get _filteredVideos {
-    final today = DateTime.now();
-    final todayStr = '${today.day}/${today.month}/${today.year}';
+    final todayStr = _todayKey;
 
     switch (_filter) {
       case VideoFilter.today:
@@ -97,8 +175,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
-    final todayStr = '${today.day}/${today.month}/${today.year}';
+    final todayStr = _todayKey;
 
     final stats = [
       StatCard(
@@ -139,6 +216,29 @@ class _DashboardPageState extends State<DashboardPage> {
 
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_errorMessage != null && _videos.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _errorMessage!,
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _loadVideos,
+              child: const Text('Coba Muat Ulang'),
+            ),
+          ],
+        ),
+      );
     }
 
     return Container(
