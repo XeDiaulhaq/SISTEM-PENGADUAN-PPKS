@@ -86,7 +86,7 @@ function Start-Services {
     if (Is-ProcessAlive $state['FastApiPid']) {
         Write-Info "FastAPI already running (PID=$($state['FastApiPid']))"
     } else {
-        $fastArgs = @('-m','dotenv','run','--',$venvPython,'-m','uvicorn','backend.fastapi.main:app','--host','0.0.0.0','--port','65514')
+        $fastArgs = @('-m','dotenv','run','--',$venvPython,'-m','uvicorn','backend.ppks_api.main:app','--host','0.0.0.0','--port','65514')
         $fastProc = Start-Process -FilePath $venvPython -ArgumentList $fastArgs -WorkingDirectory $repoRoot -PassThru
         $state['FastApiPid'] = $fastProc.Id
         Write-Info "Started FastAPI (PID=$($fastProc.Id))"

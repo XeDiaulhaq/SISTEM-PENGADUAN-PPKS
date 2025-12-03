@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/api_exceptions.dart';
+import '../services/auth_service.dart';
+import '../services/auth_storage.dart';
 
 class LoginPage extends StatefulWidget {
   final VoidCallback onLogin;
@@ -14,22 +17,65 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   String error = "";
+  bool _isSubmitting = false;
+  final AuthService _authService = AuthService();
+  final AuthStorage _authStorage = AuthStorage();
 
-  void _handleSubmit() {
-    final username = _usernameController.text;
+  @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    final token = await _authStorage.getValidToken();
+    if (token != null && mounted) {
+      widget.onLogin();
+    }
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleSubmit() async {
+    final username = _usernameController.text.trim();
     final password = _passwordController.text;
 
-    if (username == "admin" && password == "pass") {
-      widget.onLogin();
-    } else {
+    if (username.isEmpty || password.isEmpty) {
       setState(() {
-        error = "Username atau password salah";
+        error = "Username dan password wajib diisi";
       });
-      Future.delayed(const Duration(seconds: 3), () {
+      return;
+    }
+
+    setState(() {
+      error = "";
+      _isSubmitting = true;
+    });
+
+    try {
+      final response = await _authService.login(username, password);
+      await _authStorage.saveToken(response.accessToken, response.expiresIn);
+      if (!mounted) return;
+      widget.onLogin();
+    } on AuthException catch (e) {
+      setState(() {
+        error = e.message;
+      });
+    } catch (e) {
+      setState(() {
+        error = 'Gagal login: $e';
+      });
+    } finally {
+      if (mounted) {
         setState(() {
-          error = "";
+          _isSubmitting = false;
         });
-      });
+      }
     }
   }
 
@@ -120,14 +166,26 @@ class _LoginPageState extends State<LoginPage> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            icon: const Icon(Icons.login),
-                            label: const Text("Masuk"),
+                            icon: _isSubmitting
+                                ? SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        isDark ? Colors.black87 : Colors.white,
+                                      ),
+                                    ),
+                                  )
+                                : const Icon(Icons.login),
+                            label: Text(_isSubmitting ? "Memproses..." : "Masuk"),
                             style: ElevatedButton.styleFrom(
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               backgroundColor: isDark ? Colors.white : Colors.black87,
                               foregroundColor: isDark ? Colors.black87 : Colors.white,
+                              disabledBackgroundColor: Colors.grey,
                             ),
-                            onPressed: _handleSubmit,
+                            onPressed: _isSubmitting ? null : _handleSubmit,
                           ),
                         ),
 

@@ -9,6 +9,7 @@ Handles:
 """
 
 from flask import Flask, send_from_directory, jsonify, request
+from flask_cors import CORS
 from flask_socketio import SocketIO
 import os
 import subprocess
@@ -20,7 +21,9 @@ from services import pcd_main
 # --- Flask App Config ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 socketio = SocketIO(app, cors_allowed_origins='*')
+SKIP_PCD_SUBPROCESS = os.environ.get('SKIP_PCD_SUBPROCESS', '0') == '1'
 
 
 # --- SocketIO Events ---
@@ -119,7 +122,11 @@ def _start_pcd_subprocess():
 if __name__ == '__main__':
     print("🚀 Flask PCD backend running on http://0.0.0.0:5000")
     # Start PCD in a separate process so it runs alongside the server
-    pcd_proc = _start_pcd_subprocess()
+    pcd_proc = None
+    if not SKIP_PCD_SUBPROCESS:
+        pcd_proc = _start_pcd_subprocess()
+    else:
+        print('⚙️  SKIP_PCD_SUBPROCESS=1 → not spawning local camera loop.')
     try:
         socketio.run(app, host='0.0.0.0', port=5000)
     finally:

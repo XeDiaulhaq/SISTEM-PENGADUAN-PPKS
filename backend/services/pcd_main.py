@@ -24,6 +24,15 @@ except Exception:
     except Exception:
         _central_merge_fn = None
 
+# Optional voice changer import (lightweight, local)
+try:
+    from services.voice_changer import disguise_audio as _disguise_audio_fn
+except Exception:
+    try:
+        from backend.services.voice_changer import disguise_audio as _disguise_audio_fn
+    except Exception:
+        _disguise_audio_fn = None
+
 """
 pcd_main.py
 ------------
@@ -313,6 +322,21 @@ def main(argv=None):
         
         # Stop audio and get the audio file path
         audio_path = _stop_audio_recording()
+
+        # Optionally disguise audio before merge
+        try:
+            enable_vc = os.environ.get('ENABLE_VOICE_CHANGER', '1') != '0'
+        except Exception:
+            enable_vc = True
+
+        if enable_vc and audio_path and _disguise_audio_fn is not None:
+            try:
+                disguised = _disguise_audio_fn(audio_path)
+                if disguised and disguised.exists():
+                    print(f"✓ Disguised audio written to: {disguised}")
+                    audio_path = str(disguised)
+            except Exception as e:
+                print(f"⚠️ Voice changer failed, continuing with original audio: {e}")
 
         # Wait briefly for audio to be flushed and present on disk (retry a few times)
         if audio_path is None and current_audio_file:

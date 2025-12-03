@@ -6,6 +6,9 @@ __pycache__/
 
 backend/.venv/
 backend/recordings/
+backend/services/recordings
+backend/ppks_api/recordings/uploads/
+
 frontend/build/
 frontend/.dart_tool/
 frontend/.packages
