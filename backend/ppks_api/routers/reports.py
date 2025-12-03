@@ -1,6 +1,11 @@
+from datetime import datetime
+import os
+from pathlib import Path
+import shutil
 from typing import List, Optional
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
@@ -8,11 +13,15 @@ from ..config import settings
 from ..db import get_db
 from ..models import Report, ReportStatus
 from ..schemas import ReportCreate, ReportOut, ReportUpdate
+from services.video_blur import BlurVideoError, blur_video_file
 from .auth import get_current_admin
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 _api_key_header = APIKeyHeader(name="X-Report-Api-Key", auto_error=False)
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_STORAGE_DIR = _BACKEND_ROOT / "recordings" / "uploads"
+_DEFAULT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _verify_report_api_key(api_key: Optional[str] = Depends(_api_key_header)) -> None:
@@ -26,12 +35,7 @@ def _verify_report_api_key(api_key: Optional[str] = Depends(_api_key_header)) ->
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid report API key")
 
 
-@router.post("", response_model=ReportOut, status_code=status.HTTP_201_CREATED)
-def ingest_report(
-    payload: ReportCreate,
-    _: None = Depends(_verify_report_api_key),
-    db: Session = Depends(get_db),
-):
+def _create_report(payload: ReportCreate, db: Session) -> Report:
     status_value = (payload.status or ReportStatus.NEW).value
     report = Report(
         title=payload.title,
@@ -49,6 +53,90 @@ def ingest_report(
     db.commit()
     db.refresh(report)
     return report
+
+
+def _get_storage_dir() -> Path:
+    override = os.getenv("REPORT_STORAGE_DIR")
+    if override:
+        target = Path(override)
+    else:
+        target = _DEFAULT_STORAGE_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _persist_recording(upload: UploadFile) -> Path:
+    storage_dir = _get_storage_dir()
+    original_name = Path(upload.filename or "recording.mp4")
+    suffix = original_name.suffix or ".mp4"
+    target = storage_dir / f"report_{uuid4().hex}{suffix}"
+    with target.open("wb") as dest:
+        upload.file.seek(0)
+        shutil.copyfileobj(upload.file, dest)
+    try:
+        return blur_video_file(target)
+    except BlurVideoError as exc:
+        print(f"⚠️  Video blur skipped: {exc}")
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"⚠️  Unexpected error while blurring video: {exc}")
+    return target
+
+
+@router.post("", response_model=ReportOut, status_code=status.HTTP_201_CREATED)
+def ingest_report(
+    payload: ReportCreate,
+    _: None = Depends(_verify_report_api_key),
+    db: Session = Depends(get_db),
+):
+    return _create_report(payload, db)
+
+
+@router.post("/upload", response_model=ReportOut, status_code=status.HTTP_201_CREATED)
+async def upload_report(
+    recording: UploadFile = File(...),
+    title: str = Form(...),
+    location: str = Form(...),
+    description: str = Form(...),
+    email: str = Form(...),
+    reporter_phone: str = Form(...),
+    blur_type: Optional[str] = Form(default=None),
+    captured_at: Optional[str] = Form(default=None),
+    _: None = Depends(_verify_report_api_key),
+    db: Session = Depends(get_db),
+):
+    saved_path = _persist_recording(recording)
+    try:
+        relative_path = saved_path.relative_to(_BACKEND_ROOT)
+    except ValueError:
+        relative_path = saved_path
+
+    captured_at_dt: Optional[datetime] = None
+    if captured_at:
+        try:
+            captured_at_dt = datetime.fromisoformat(captured_at)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="captured_at harus berformat ISO 8601",
+            ) from exc
+
+    notes = description
+    if blur_type:
+        notes = f"{description}\nBlur: {blur_type}"
+
+    payload = ReportCreate(
+        title=title,
+        location=location,
+        recording_path=str(relative_path).replace("\\", "/"),
+        thumbnail_path=None,
+        status=ReportStatus.NEW,
+        duration_seconds=None,
+        submitted_by=email,
+        reporter_phone=reporter_phone,
+        notes=notes,
+        captured_at=captured_at_dt,
+    )
+    return _create_report(payload, db)
 
 
 @router.get("", response_model=List[ReportOut])
