@@ -13,6 +13,8 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _PROTOTXT = _BACKEND_DIR / "models" / "deploy.prototxt.txt"
 _MODEL = _BACKEND_DIR / "models" / "res10_300x300_ssd_iter_140000.caffemodel"
 _CONFIDENCE_THRESHOLD = 0.5
+_MAX_OUTPUT_FPS = 15.0
+_MIN_OUTPUT_FPS = 5.0
 
 
 class BlurVideoError(RuntimeError):
@@ -136,6 +138,7 @@ def blur_video_file(source: Path, destination: Optional[Path] = None) -> Path:
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 0) or 24.0
+    fps = max(_MIN_OUTPUT_FPS, min(_MAX_OUTPUT_FPS, fps))
 
     replace_original = destination is None
     final_output = Path(destination) if destination else source_path

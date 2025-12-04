@@ -5,16 +5,29 @@ import shutil
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+    Header,
+    Query,
+    Response,
+)
+from fastapi.responses import FileResponse
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
-from ..models import Report, ReportStatus
+from ..models import Report, ReportStatus, Admin
 from ..schemas import ReportCreate, ReportOut, ReportUpdate
 from services.video_blur import BlurVideoError, blur_video_file
 from .auth import get_current_admin
+from ..security import decode_token
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -82,6 +95,28 @@ def _persist_recording(upload: UploadFile) -> Path:
     return target
 
 
+def _rename_recording(
+    report_id: int,
+    current_path: Path,
+    captured_at: Optional[datetime],
+) -> Path:
+    if not current_path.exists():
+        return current_path
+
+    timestamp_source = captured_at or datetime.now()
+    timestamp = timestamp_source.strftime("%Y%m%d-%H%M%S")
+    safe_suffix = current_path.suffix or ".mp4"
+    new_name = f"report-{report_id} {timestamp}{safe_suffix}"
+    new_path = current_path.with_name(new_name)
+
+    try:
+        current_path.rename(new_path)
+        return new_path
+    except OSError as exc:
+        print(f"⚠️  Failed to rename recording for report {report_id}: {exc}")
+        return current_path
+
+
 @router.post("", response_model=ReportOut, status_code=status.HTTP_201_CREATED)
 def ingest_report(
     payload: ReportCreate,
@@ -136,7 +171,20 @@ async def upload_report(
         notes=notes,
         captured_at=captured_at_dt,
     )
-    return _create_report(payload, db)
+    report = _create_report(payload, db)
+
+    renamed_path = _rename_recording(report.id, saved_path, captured_at_dt)
+    if renamed_path != saved_path:
+        try:
+            relative_path = renamed_path.relative_to(_BACKEND_ROOT)
+        except ValueError:
+            relative_path = renamed_path
+
+        report.recording_path = str(relative_path).replace("\\", "/")
+        db.commit()
+        db.refresh(report)
+
+    return report
 
 
 @router.get("", response_model=List[ReportOut])
@@ -187,3 +235,57 @@ def update_report(
     db.commit()
     db.refresh(report)
     return report
+
+
+def _require_admin_from_request(
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    token: str | None = Query(default=None),
+) -> Admin:
+    bearer_token: str | None = None
+    if authorization and authorization.lower().startswith("bearer "):
+        bearer_token = authorization.split(" ", 1)[1].strip()
+    elif token:
+        bearer_token = token.strip()
+
+    if not bearer_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token tidak ditemukan")
+
+    payload = decode_token(bearer_token)
+    if payload is None or "sub" not in payload:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token tidak valid")
+
+    admin = db.get(Admin, int(payload["sub"]))
+    if admin is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin tidak ditemukan")
+    return admin
+
+
+@router.get("/{report_id}/file")
+def download_report_file(
+    report_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(_require_admin_from_request),
+    response: Response = Response(),
+):
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    absolute_path = (_BACKEND_ROOT / report.recording_path).resolve()
+    try:
+        absolute_path.relative_to(_BACKEND_ROOT)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid recording path")
+
+    if not absolute_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
+
+    file_response = FileResponse(
+        absolute_path,
+        media_type="video/mp4",
+        filename=absolute_path.name,
+    )
+    file_response.headers["Access-Control-Allow-Origin"] = "*"
+    file_response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+    return file_response

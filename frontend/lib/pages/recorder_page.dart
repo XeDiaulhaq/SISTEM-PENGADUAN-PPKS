@@ -20,7 +20,7 @@ class RecorderPage extends StatefulWidget {
 }
 
 class _RecorderPageState extends State<RecorderPage> {
-  static const _frameInterval = Duration(milliseconds: 250);
+  static const _frameInterval = Duration(milliseconds: 1200);
   bool _isRecording = false;
   CameraController? _cameraController;
   String? _uploadedVideoPath;

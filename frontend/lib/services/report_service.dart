@@ -59,6 +59,7 @@ class ReportService {
     final createdAt = DateTime.tryParse((json['created_at'] ?? '') as String) ?? DateTime.now();
     final recordingPath = json['recording_path'] as String?;
     final filename = recordingPath != null ? recordingPath.split('/').last : 'recording_${json['id']}';
+    final downloadUrl = '$fastApiBaseUrl/reports/${json['id']}/file';
     final duration = json['duration_seconds'];
 
     return VideoModel(
@@ -76,7 +77,7 @@ class ReportService {
       description: (json['notes'] as String?) ?? (json['title'] as String?),
       email: _nullableString(json['submitted_by']),
       phone: _nullableString(json['reporter_phone']),
-      videoUrl: recordingPath,
+      videoUrl: recordingPath != null ? downloadUrl : null,
     );
   }
 
