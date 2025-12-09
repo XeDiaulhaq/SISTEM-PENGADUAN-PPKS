@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_exceptions.dart';
+import '../services/local_face_blur_service.dart';
 import '../services/report_submission_service.dart';
 import '../services/streaming_service.dart';
 import '../widgets/footer.dart';
@@ -20,13 +21,14 @@ class RecorderPage extends StatefulWidget {
 }
 
 class _RecorderPageState extends State<RecorderPage> {
-  static const _frameInterval = Duration(milliseconds: 1200);
+  static const _frameInterval = Duration(milliseconds: 3000); // 3 detik per frame untuk performa optimal
   bool _isRecording = false;
   CameraController? _cameraController;
   String? _uploadedVideoPath;
   bool _showTermsDialog = true;
   final _reportSubmissionService = ReportSubmissionService();
   final _streamingService = StreamingService();
+  final _faceBlurService = LocalFaceBlurService();
   bool _isSubmitting = false;
   StreamSubscription<Uint8List>? _processedFrameSubscription;
   Uint8List? _latestBlurredFrame;
@@ -46,11 +48,14 @@ class _RecorderPageState extends State<RecorderPage> {
     _initializeCamera();
     _showTermsDialogIfNeeded();
     _registerFormListeners();
+    // DISABLED: Streaming subscription - will use local blur preview instead
+    // _startLocalBlurPreview();
   }
 
   @override
   void dispose() {
     _reportSubmissionService.dispose();
+    _faceBlurService.dispose();
     unawaited(_stopStreaming());
     _streamingService.dispose();
     _cameraController?.dispose();
@@ -75,23 +80,103 @@ class _RecorderPageState extends State<RecorderPage> {
   void _onFormChanged() => setState(() {});
 
   Future<void> _initializeCamera() async {
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
-
-    _cameraController = CameraController(
-      cameras.first,
-      ResolutionPreset.low,
-      enableAudio: true,
-    );
-
     try {
-      await _cameraController!.initialize();
+      print('[Camera] Getting available cameras...');
+      final cameras = await availableCameras();
+      print('[Camera] Found ${cameras.length} camera(s)');
+
+      if (cameras.isEmpty) {
+        _showErrorSnackBar(
+          'Tidak ada kamera yang tersedia. '
+          'Pastikan browser memiliki izin untuk mengakses kamera.',
+        );
+        return;
+      }
+
+      // Coba setiap kamera yang tersedia
+      CameraDescription? workingCamera;
+      Exception? lastError;
+
+      for (var i = 0; i < cameras.length; i++) {
+        final camera = cameras[i];
+        print('[Camera] Trying camera $i: ${camera.name}');
+
+        try {
+          final controller = CameraController(
+            camera,
+            ResolutionPreset.low,
+            enableAudio: true, // Enable audio untuk recording dengan suara
+          );
+
+          print('[Camera] Initializing camera $i...');
+          await controller.initialize();
+          print('[Camera] Camera $i initialized successfully!');
+
+          // Jika berhasil, gunakan kamera ini
+          _cameraController = controller;
+          workingCamera = camera;
+          break;
+        } catch (e) {
+          print('[Camera] Failed to initialize camera $i: $e');
+          lastError = e as Exception;
+          // Lanjut coba kamera berikutnya
+        }
+      }
+
+      if (workingCamera == null) {
+        print('[Camera] All cameras failed to initialize');
+        throw lastError ?? Exception('Tidak dapat menginisialisasi kamera');
+      }
+
+      print('[Camera] Successfully using camera: ${workingCamera.name}');
+
       if (mounted) {
         setState(() {});
-        _startStreaming();
+        // DISABLED: Streaming preview blur disabled untuk performa lebih baik
+        // Server akan proses blur saat submit
+        // _startStreaming();
+        _showSuccessSnackBar(
+          'Kamera siap',
+          'Tekan "Mulai Rekam" untuk memulai perekaman video.',
+        );
       }
     } catch (e) {
-      _showErrorSnackBar('Tidak dapat mengakses kamera: $e');
+      print('[Camera] Error in _initializeCamera: $e');
+      String errorMessage = 'Tidak dapat mengakses kamera: $e';
+
+      // Berikan pesan error yang lebih spesifik
+      if (e.toString().contains('Permission') ||
+          e.toString().contains('NotAllowedError')) {
+        errorMessage =
+          'Akses kamera ditolak!\n\n'
+          'Pastikan:\n'
+          '1. Browser memiliki izin untuk mengakses kamera\n'
+          '2. Tidak ada aplikasi lain yang menggunakan kamera\n'
+          '3. Refresh halaman dan izinkan akses kamera saat diminta';
+      } else if (e.toString().contains('NotFoundError')) {
+        errorMessage =
+          'Kamera tidak ditemukan!\n\n'
+          'Pastikan:\n'
+          '1. Kamera terpasang dengan benar\n'
+          '2. Driver kamera sudah terinstall\n'
+          '3. Kamera tidak digunakan aplikasi lain';
+      } else if (e.toString().contains('NotReadable') ||
+                 e.toString().contains('cameraNotReadable')) {
+        errorMessage =
+          'Kamera sedang digunakan aplikasi lain!\n\n'
+          'Solusi:\n'
+          '1. Tutup aplikasi lain yang menggunakan kamera (Teams, Zoom, dll)\n'
+          '2. Tutup tab browser lain yang menggunakan kamera\n'
+          '3. Restart browser Chrome\n'
+          '4. Jika masih gagal, restart komputer\n\n'
+          'Atau gunakan tombol "Upload Berkas" untuk mengunggah video.';
+      }
+
+      _showErrorSnackBar(errorMessage);
+
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -114,17 +199,24 @@ class _RecorderPageState extends State<RecorderPage> {
 
   Future<void> _startRecording() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      _showErrorSnackBar('Kamera belum siap');
+      _showErrorSnackBar(
+        'Kamera tidak tersedia.\n\n'
+        'Silakan gunakan tombol "Upload Berkas" untuk mengunggah video yang sudah ada.',
+      );
       return;
     }
 
     try {
+      // PENTING: Stop streaming saat recording untuk performa lebih baik
+      // Client tidak perlu streaming - server akan process blur nanti
+      await _stopStreaming();
+
       await _cameraController!.startVideoRecording();
       setState(() => _isRecording = true);
       _latestBlurredFrame = null;
       _showSuccessSnackBar(
-        'Kamera aktif',
-        'Perekaman video dimulai. Tekan "Hentikan Rekam" untuk mengakhiri.',
+        'Recording dimulai',
+        'Video sedang direkam. Tekan "Hentikan Rekam" untuk mengakhiri.',
       );
     } catch (e) {
       _showErrorSnackBar('Error saat memulai rekaman: $e');
@@ -140,7 +232,8 @@ class _RecorderPageState extends State<RecorderPage> {
         _isRecording = false;
         _uploadedVideoPath = file.path;
       });
-      _startStreaming();
+      // DISABLED: No streaming needed anymore
+      // _startStreaming();
       _showSuccessSnackBar(
         'Rekaman selesai',
         'Video berhasil direkam dan siap untuk dikirim',
@@ -217,20 +310,68 @@ class _RecorderPageState extends State<RecorderPage> {
   }
 
   Future<void> _captureAndSendFrame() async {
+    // Skip jika sedang mengirim atau tidak streaming
     if (_isSendingFrame || _cameraController == null) return;
     if (!_cameraController!.value.isInitialized) return;
-    if (_cameraController!.value.isRecordingVideo) return;
+
+    // IMPORTANT: Jangan capture saat recording untuk menghindari freeze
+    if (_cameraController!.value.isRecordingVideo) {
+      print('[Frame] Skipping capture - recording in progress');
+      return;
+    }
 
     _isSendingFrame = true;
     try {
       final still = await _cameraController!.takePicture();
       final bytes = await still.readAsBytes();
-      await _streamingService.sendFrame(bytes);
-    } catch (_) {
-      // swallow errors, preview will retry on next tick
+
+      // Kirim frame ke server untuk di-blur (non-blocking)
+      _streamingService.sendFrame(bytes).then((_) {
+        print('[Frame] Frame sent successfully');
+      }).catchError((e) {
+        print('[Frame] Failed to send: $e');
+      });
+    } catch (e) {
+      print('[Frame] Failed to capture: $e');
     } finally {
       _isSendingFrame = false;
     }
+  }
+
+  Future<void> _captureAndBlurLocal() async {
+    // Untuk local face blur preview - not blocking, fire and forget
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    if (!mounted) return;
+
+    try {
+      final still = await _cameraController!.takePicture();
+      final bytes = await still.readAsBytes();
+
+      // Blur local (non-blocking)
+      _faceBlurService.detectAndBlurFaces(bytes).then((blurredBytes) {
+        if (blurredBytes != null && mounted) {
+          setState(() => _latestBlurredFrame = blurredBytes);
+        }
+      }).catchError((e) {
+        print('[LocalBlur] Error in processing: $e');
+      });
+    } catch (e) {
+      print('[LocalBlur] Failed to capture: $e');
+    }
+  }
+
+  void _startLocalBlurPreview() {
+    // Timer untuk capture dan blur local setiap N ms
+    _streamingTimer?.cancel();
+    _streamingTimer = Timer.periodic(Duration(milliseconds: 500), (_) {
+      // Update local blur every 500ms saat tidak recording
+      if (!_isRecording && mounted) {
+        unawaited(_captureAndBlurLocal());
+      }
+    });
   }
 
   Future<void> _submitReport() async {
@@ -371,34 +512,6 @@ class _RecorderPageState extends State<RecorderPage> {
                         ],
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isDark
-                          ? Colors.white12
-                          : Colors.black.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.face_retouching_natural,
-                            size: 14,
-                            color: isDark ? Colors.white70 : Colors.black54,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'AUTO BLUR',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: isDark ? Colors.white70 : Colors.black54,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -471,24 +584,6 @@ class _RecorderPageState extends State<RecorderPage> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.visibility_off,
-                            size: 16,
-                            color: isDark ? Colors.tealAccent : Colors.teal,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Blur otomatis aktif dan terekam',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: isDark ? Colors.white70 : Colors.black54,
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                 ),
@@ -872,46 +967,137 @@ class _RecorderPageState extends State<RecorderPage> {
   }
 
   Widget _buildPreviewPlaceholder() {
+    // Jika kamera sudah initialize dan siap
     if (_cameraController?.value.isInitialized ?? false) {
       final preview = CameraPreview(_cameraController!);
       return Stack(
         fit: StackFit.expand,
         children: [
           preview,
-          if (_latestBlurredFrame != null)
-            Positioned.fill(
-              child: Image.memory(
-                _latestBlurredFrame!,
-                fit: BoxFit.cover,
-              ),
-            )
-          else ...[
-            ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: preview,
-            ),
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.15),
-                    Colors.black.withValues(alpha: 0.05),
+          // Privacy disclaimer overlay
+          if (!_isRecording)
+            Positioned(
+              bottom: 20,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.privacy_tip,
+                      color: Colors.green[300],
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Privasi Terjaga: Wajah akan otomatis di-blur saat video diproses di server',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-          ],
+          // Show recording indicator
+          if (_isRecording)
+            Positioned(
+              top: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.fiber_manual_record, size: 8, color: Colors.white),
+                    SizedBox(width: 8),
+                    Text(
+                      'REC',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       );
     }
 
-    return const Center(
-      child: Text(
-        'Klik "Mulai Rekam" untuk merekam video\natau "Upload Berkas" untuk mengunggah file',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.grey, fontSize: 12),
+    // Jika kamera belum tersedia
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.videocam_off,
+            size: 48,
+            color: Colors.grey[600],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _cameraController == null
+                ? 'Menginisialisasi kamera...'
+                : 'Kamera Tidak Aktif',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.grey[700],
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              _cameraController == null
+                  ? 'Mohon tunggu...'
+                  : 'Pastikan kamera sudah diizinkan di sistem Windows.\n\n'
+                    'Atau gunakan "Upload Berkas" untuk mengunggah video yang sudah ada.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_cameraController != null && !(_cameraController?.value.isInitialized ?? false))
+            ElevatedButton.icon(
+              onPressed: () {
+                setState(() {
+                  _cameraController = null;
+                });
+                _initializeCamera();
+              },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Coba Lagi'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+        ],
       ),
     );
   }

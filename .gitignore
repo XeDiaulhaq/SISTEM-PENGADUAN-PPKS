@@ -5,6 +5,7 @@ __pycache__/
 /.env
 
 backend/.venv/
+backend/venv-win/
 backend/recordings/
 backend/services/recordings
 backend/ppks_api/recordings/uploads/

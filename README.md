@@ -47,27 +47,31 @@ Sistem ini memungkinkan pelaporan kejadian ke Satgas PPKS dengan perekaman video
 - `REPORT_API_KEY`: token sederhana untuk mengamankan endpoint ingest.
 - `REPORT_TITLE_PREFIX` & `REPORT_SUBMITTED_BY` (opsional): kustomisasi judul laporan dan identitas pengirim ketika `services/pcd_main.py` mengirim metadata.
 
-## Cara menjalankan (dev)
-Catatan: instruksi di bawah ini untuk lingkungan pengembangan. Periksa `backend/requirements.txt` dan `frontend/pubspec.yaml` untuk detail dependensi.
+## Cara menjalankan (dev / Linux)
+Catatan: jalankan perintah berikut dari mesin Linux Anda. Path absolut menggunakan tanda kutip karena direktori proyek mengandung spasi.
 
-Backend (Linux / macOS / WSL):
-
+### 1. FastAPI metadata backend (port 8000)
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-export FLASK_APP=app.py
-flask run --host=0.0.0.0 --port=5000
+cd "/run/media/archie/Kuliah/Dia/Kuliah/Semester 5/Pengolahan Citra Digital/proyek-2/SISTEM-PENGADUAN-PPKS/backend"
+./venv-linux/bin/uvicorn ppks_api.main:app --host 0.0.0.0 --port 8000
 ```
 
-Frontend (Flutter Web):
-
+### 2. Flask PCD streaming service (port 5000)
 ```bash
-cd frontend
-flutter pub get
-flutter run -d chrome
+cd "/run/media/archie/Kuliah/Dia/Kuliah/Semester 5/Pengolahan Citra Digital/proyek-2/SISTEM-PENGADUAN-PPKS/backend"
+SKIP_PCD_SUBPROCESS=1 ./venv-linux/bin/python app.py
 ```
+
+### 3. Frontend Flutter Web (Chrome)
+```bash
+cd "/run/media/archie/Kuliah/Dia/Kuliah/Semester 5/Pengolahan Citra Digital/proyek-2/SISTEM-PENGADUAN-PPKS/frontend"
+flutter run -d chrome \
+	--dart-define=FASTAPI_BASE_URL=http://127.0.0.1:8000 \
+	--dart-define=FLASK_STREAMING_BASE_URL=http://127.0.0.1:5000 \
+	--dart-define=REPORT_API_KEY=pcd-secret
+```
+
+Pastikan dependensi sudah terpasang sebelum menjalankan perintah di atas (`pip install -r backend/requirements.txt` dan `flutter pub get`).
 
 ## Struktur proyek (ringkas)
 - backend/: kode server (Flask, pemrosesan video, penyimpanan)
@@ -127,7 +131,7 @@ Langkah singkat:
 	git push origin feat/nama-fitur-atau-fix
 	```
 
-8. Buka Pull Request (PR) di GitHub: pilih branch pada fork Anda dan arahkan ke `XeDiaulhaq/SISTEM-PENGADUAN-PPKS:main` (atau cabang target lain yang ditentukan). Isi deskripsi PR dengan ringkasan perubahan, alasan, dan langkah verifikasi.
+8. Buka Pull Request (PR) di GitHub: pilih branch pada fork Anda dan arahkan ke `Diarchves/SISTEM-PENGADUAN-PPKS:main` (atau cabang target lain yang ditentukan). Isi deskripsi PR dengan ringkasan perubahan, alasan, dan langkah verifikasi.
 
 9. Tanggapi review jika maintainer meminta perubahan. Lakukan commit tambahan pada branch yang sama lalu push — PR akan terupdate otomatis.
 

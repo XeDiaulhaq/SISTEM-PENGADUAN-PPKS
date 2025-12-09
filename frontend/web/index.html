@@ -4,8 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sistem Pengaduan PPKS</title>
+    
+    <!-- Request camera permission early -->
+    <script>
+      // Request camera permission on page load
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        console.log('Requesting camera permission...');
+        navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+          .then(function(stream) {
+            console.log('Camera permission granted!');
+            // Stop the stream immediately, we just needed the permission
+            stream.getTracks().forEach(track => track.stop());
+          })
+          .catch(function(err) {
+            console.error('Camera permission denied:', err);
+          });
+      }
+    </script>
   </head>
   <body>
     <script src="main.dart.js"></script>
   </body>
- </html>
+</html>
