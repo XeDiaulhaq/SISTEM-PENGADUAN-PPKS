@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 import 'dart:async';
 import '../models/video_model.dart';
-import '../services/video_storage_service.dart';
+import '../services/auth_storage.dart';
+import '../services/report_service.dart';
+import '../services/api_exceptions.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -11,11 +15,27 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final VideoStorageService _storageService = VideoStorageService();
+  final ReportService _reportService = ReportService();
+  final AuthStorage _authStorage = AuthStorage();
   List<VideoModel> _videos = [];
   VideoFilter _filter = VideoFilter.all;
   Timer? _refreshTimer;
   bool _isLoading = true;
+  bool _isFetching = false;
+  bool _redirecting = false;
+  String? _errorMessage;
+  String? _currentToken;
+
+  String get _todayKey {
+    final now = DateTime.now();
+    return _formatDateKey(now);
+  }
+
+  String _formatDateKey(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    return '$day/$month/${date.year}';
+  }
 
   // Getter untuk dark mode detection
   bool get isDark => Theme.of(context).brightness == Brightness.dark;
@@ -37,23 +57,56 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _loadVideos() async {
-    final videos = await _storageService.loadVideos();
-    if (mounted) {
+    if (_isFetching) return;
+    _isFetching = true;
+
+    final token = await _authStorage.getValidToken();
+    if (token == null) {
+      _isFetching = false;
+      await _handleUnauthorized('Sesi login berakhir. Silakan login ulang.');
+      return;
+    }
+
+    try {
+      final videos = await _reportService.fetchReports(token);
+      if (!mounted) return;
       setState(() {
+        _currentToken = token;
         _videos = videos;
         _isLoading = false;
+        _errorMessage = null;
       });
+    } on UnauthorizedException catch (e) {
+      await _handleUnauthorized(e.message);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Gagal memuat laporan';
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memuat laporan: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      _isFetching = false;
     }
   }
 
   Future<void> _updateVideoStatus(String id, VideoStatus newStatus) async {
-    final updatedVideos =
-        await _storageService.updateVideoStatus(_videos, id, newStatus);
-    setState(() {
-      _videos = updatedVideos;
-    });
+    final token = _currentToken ?? await _authStorage.getValidToken();
+    if (token == null) {
+      await _handleUnauthorized('Sesi login berakhir. Silakan login ulang.');
+      return;
+    }
 
-    if (mounted) {
+    try {
+      await _reportService.updateReportStatus(token, id, newStatus);
+      await _loadVideos();
+      if (!mounted) return;
       final statusText =
           newStatus == VideoStatus.processing ? 'Sedang Diproses' : 'Selesai';
       ScaffoldMessenger.of(context).showSnackBar(
@@ -63,12 +116,39 @@ class _DashboardPageState extends State<DashboardPage> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+    } on UnauthorizedException catch (e) {
+      await _handleUnauthorized(e.message);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memperbarui status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
+  Future<void> _handleUnauthorized(String? message) async {
+    if (_redirecting) return;
+    _redirecting = true;
+    _refreshTimer?.cancel();
+    await _authStorage.clear();
+    if (!mounted) return;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+    Navigator.of(context).pushReplacementNamed('/login');
+  }
+
   List<VideoModel> get _filteredVideos {
-    final today = DateTime.now();
-    final todayStr = '${today.day}/${today.month}/${today.year}';
+    final todayStr = _todayKey;
 
     switch (_filter) {
       case VideoFilter.today:
@@ -91,14 +171,14 @@ class _DashboardPageState extends State<DashboardPage> {
       builder: (context) => VideoDetailDialog(
         video: video,
         onStatusUpdate: _updateVideoStatus,
+        authToken: _currentToken,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
-    final todayStr = '${today.day}/${today.month}/${today.year}';
+    final todayStr = _todayKey;
 
     final stats = [
       StatCard(
@@ -139,6 +219,29 @@ class _DashboardPageState extends State<DashboardPage> {
 
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_errorMessage != null && _videos.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _errorMessage!,
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _loadVideos,
+              child: const Text('Coba Muat Ulang'),
+            ),
+          ],
+        ),
+      );
     }
 
     return Container(
@@ -581,7 +684,7 @@ class VideoCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        video.filename,
+                        video.title.isNotEmpty ? video.title : video.filename,
                         style: TextStyle(
                           fontSize: isMobile ? 14 : 15, // text-sm md:text-base
                           fontWeight: FontWeight.w600,
@@ -590,6 +693,21 @@ class VideoCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      if (video.title != video.filename && video.filename.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            video.filename,
+                            style: TextStyle(
+                              fontSize: isMobile ? 11 : 12,
+                              color: isDark
+                                  ? const Color(0xFF9CA3AF)
+                                  : const Color(0xFF6B7280),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       const SizedBox(height: 6), // mb-1.5
                       Wrap(
                         spacing: isMobile ? 8 : 10, // gap-2 md:gap-3
@@ -610,6 +728,18 @@ class VideoCard extends StatelessWidget {
                             video.size,
                             isMobile,
                           ),
+                          if (video.location != null)
+                            _buildInfoChip(
+                              Icons.location_on,
+                              video.location!,
+                              isMobile,
+                            ),
+                          if (video.phone != null)
+                            _buildInfoChip(
+                              Icons.phone,
+                              video.phone!,
+                              isMobile,
+                            ),
                           if (video.blurType != null)
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -869,12 +999,52 @@ class VideoCard extends StatelessWidget {
 class VideoDetailDialog extends StatelessWidget {
   final VideoModel video;
   final Function(String, VideoStatus) onStatusUpdate;
+  final String? authToken;
 
   const VideoDetailDialog({
     super.key,
     required this.video,
     required this.onStatusUpdate,
+    this.authToken,
   });
+
+  Uri? _buildAuthorizedUri(String? baseUrl) {
+    if (baseUrl == null || baseUrl.isEmpty) {
+      return null;
+    }
+
+    final uri = Uri.tryParse(baseUrl);
+    if (uri == null) {
+      return null;
+    }
+
+    if (authToken == null || authToken!.isEmpty) {
+      return uri;
+    }
+
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['token'] = authToken!;
+    return uri.replace(queryParameters: query);
+  }
+
+  Future<void> _downloadVideo(BuildContext context) async {
+    final uri = _buildAuthorizedUri(video.videoUrl);
+    if (uri == null) {
+      _showSnackBar(context, 'Video belum tersedia untuk diunduh.');
+      return;
+    }
+
+    final success = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!success) {
+      _showSnackBar(context, 'Gagal membuka tautan unduhan.');
+    }
+  }
+
+  void _showSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -978,41 +1148,21 @@ class VideoDetailDialog extends StatelessWidget {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            width: double.infinity,
-                            height: 300,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.play_circle_outline,
-                                    size: 64,
-                                    color: Colors.grey[400],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Preview video tidak tersedia',
-                                    style: TextStyle(color: Colors.grey[600]),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Video dapat diunduh untuk dilihat',
-                                    style: TextStyle(
-                                      color: Colors.grey[500],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                          Builder(
+                            builder: (context) {
+                              final previewUrl = _buildAuthorizedUri(video.videoUrl)?.toString();
+                              return SizedBox(
+                                height: 300,
+                                width: double.infinity,
+                                child: VideoPreviewPlayer(
+                                  videoUrl: previewUrl,
+                                ),
+                              );
+                            },
                           ),
                           const SizedBox(height: 16),
                           _buildInfoRow(Icons.videocam, video.filename),
+                          _buildInfoRow(Icons.title, video.title),
                           _buildInfoRow(Icons.calendar_today, video.uploadDate),
                           _buildInfoRow(Icons.access_time, video.uploadTime),
                           _buildInfoRow(Icons.storage, video.size),
@@ -1054,7 +1204,7 @@ class VideoDetailDialog extends StatelessWidget {
                     if (video.email != null || video.phone != null) ...[
                       _buildSection(
                         context,
-                        'Informasi Kontak Pelapor (Opsional)',
+                        'Informasi Kontak Pelapor',
                         Icons.contact_phone,
                         Colors.green,
                         Column(
@@ -1132,10 +1282,7 @@ class VideoDetailDialog extends StatelessWidget {
                     const SizedBox(width: 12),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        // Download video
-                        Navigator.pop(context);
-                      },
+                      onPressed: () => _downloadVideo(context),
                       icon: const Icon(Icons.download),
                       label: const Text('Unduh Video'),
                       style: OutlinedButton.styleFrom(
@@ -1296,6 +1443,201 @@ class VideoDetailDialog extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class VideoPreviewPlayer extends StatefulWidget {
+  const VideoPreviewPlayer({super.key, this.videoUrl});
+
+  final String? videoUrl;
+
+  @override
+  State<VideoPreviewPlayer> createState() => _VideoPreviewPlayerState();
+}
+
+class _VideoPreviewPlayerState extends State<VideoPreviewPlayer> {
+  VideoPlayerController? _controller;
+  bool _isLoading = false;
+  String? _error;
+  bool _isMuted = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeController();
+  }
+
+  @override
+  void didUpdateWidget(VideoPreviewPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.videoUrl != oldWidget.videoUrl) {
+      _disposeController();
+      _initializeController();
+    }
+  }
+
+  Future<void> _initializeController() async {
+    final url = widget.videoUrl;
+    if (url == null || url.isEmpty) {
+      setState(() => _error = 'Video belum tersedia');
+      return;
+    }
+
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      setState(() => _error = 'URL video tidak valid');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final controller = VideoPlayerController.networkUrl(uri);
+      await controller.initialize();
+      await controller.setLooping(true);
+      await controller.setVolume(_isMuted ? 0 : 1);
+      // Chrome/Brave only autoplay if muted, so ensure playback starts
+      await controller.play();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() => _controller = controller);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Gagal memuat video');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _disposeController() {
+    _controller?.pause();
+    _controller?.dispose();
+    _controller = null;
+  }
+
+  @override
+  void dispose() {
+    _disposeController();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return _buildPlaceholder(
+        context,
+        child: const CircularProgressIndicator(),
+      );
+    }
+
+    if (_error != null) {
+      return _buildPlaceholder(
+        context,
+        child: Text(
+          _error!,
+          style: Theme.of(context).textTheme.bodyMedium,
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return _buildPlaceholder(
+        context,
+        child: const Text('Video tidak tersedia'),
+      );
+    }
+
+    final aspectRatio = controller.value.aspectRatio == 0
+        ? 16 / 9
+        : controller.value.aspectRatio;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Container(
+              color: Colors.black,
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: aspectRatio,
+                  child: VideoPlayer(controller),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              color: Colors.black54,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () {
+                      if (controller.value.isPlaying) {
+                        controller.pause();
+                      } else {
+                        controller.play();
+                      }
+                      setState(() {});
+                    },
+                    icon: Icon(
+                      controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      color: Colors.white,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () async {
+                      _isMuted = !_isMuted;
+                      await controller.setVolume(_isMuted ? 0 : 1);
+                      setState(() {});
+                    },
+                    icon: Icon(
+                      _isMuted ? Icons.volume_off : Icons.volume_up,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Expanded(
+                    child: VideoProgressIndicator(
+                      controller,
+                      allowScrubbing: true,
+                      colors: VideoProgressColors(
+                        playedColor: Colors.blueAccent,
+                        backgroundColor: Colors.white24,
+                        bufferedColor: Colors.white38,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder(BuildContext context, {required Widget child}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(child: child),
     );
   }
 }

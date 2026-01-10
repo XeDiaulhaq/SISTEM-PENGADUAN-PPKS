@@ -39,7 +39,7 @@ Sistem ini memungkinkan pelaporan kejadian ke Satgas PPKS dengan perekaman video
 	```
 
 3. Pastikan driver MySQL (`pymysql`) terinstal saat menjalankan `pip install -r backend/requirements.txt`.
-4. Jalankan FastAPI (`uvicorn backend.fastapi.main:app --port 65514`) dan pastikan log menampilkan koneksi sukses ke database MySQL.
+4. Jalankan FastAPI (`uvicorn backend.ppks_api.main:app --port 65514` atau `uvicorn ppks_api.main:app --port 65514` bila Anda sudah berada di folder `backend/`) dan pastikan log menampilkan koneksi sukses ke database MySQL.
 
 ### Variabel lingkungan penting
 - `BACKEND_URL`: alamat Flask blur backend yang menerima `/upload_frame`.

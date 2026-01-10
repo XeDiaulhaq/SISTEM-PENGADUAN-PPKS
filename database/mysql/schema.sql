@@ -15,11 +15,13 @@ CREATE TABLE IF NOT EXISTS admins (
 CREATE TABLE IF NOT EXISTS reports (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   title VARCHAR(255) NOT NULL,
+  location VARCHAR(255) DEFAULT NULL,
   recording_path VARCHAR(500) NOT NULL,
   thumbnail_path VARCHAR(500) DEFAULT NULL,
   status ENUM('new','processing','completed') NOT NULL DEFAULT 'new',
   duration_seconds INT DEFAULT NULL,
   submitted_by VARCHAR(255) DEFAULT NULL,
+  reporter_phone VARCHAR(50) DEFAULT NULL,
   notes TEXT DEFAULT NULL,
   captured_at DATETIME DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

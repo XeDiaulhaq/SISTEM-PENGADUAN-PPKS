@@ -1,11 +1,16 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui';
+
 import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../widgets/terms_dialog.dart';
+
+import '../services/api_exceptions.dart';
+import '../services/report_submission_service.dart';
+import '../services/streaming_service.dart';
 import '../widgets/footer.dart';
+import '../widgets/terms_dialog.dart';
 
 class RecorderPage extends StatefulWidget {
   const RecorderPage({super.key});
@@ -15,13 +20,19 @@ class RecorderPage extends StatefulWidget {
 }
 
 class _RecorderPageState extends State<RecorderPage> {
+  static const _frameInterval = Duration(milliseconds: 1200);
   bool _isRecording = false;
-  bool _blurEnabled = false;
-  String _blurMethod = 'gaussian'; // 'gaussian' or 'pixelation'
   CameraController? _cameraController;
   String? _uploadedVideoPath;
   bool _showTermsDialog = true;
-  List<String> _recordedChunks = [];
+  final _reportSubmissionService = ReportSubmissionService();
+  final _streamingService = StreamingService();
+  bool _isSubmitting = false;
+  StreamSubscription<Uint8List>? _processedFrameSubscription;
+  Uint8List? _latestBlurredFrame;
+  Timer? _streamingTimer;
+  bool _isSendingFrame = false;
+  bool _isStreaming = false;
 
   // Form fields
   final _locationController = TextEditingController();
@@ -34,10 +45,14 @@ class _RecorderPageState extends State<RecorderPage> {
     super.initState();
     _initializeCamera();
     _showTermsDialogIfNeeded();
+    _registerFormListeners();
   }
 
   @override
   void dispose() {
+    _reportSubmissionService.dispose();
+    unawaited(_stopStreaming());
+    _streamingService.dispose();
     _cameraController?.dispose();
     _locationController.dispose();
     _descriptionController.dispose();
@@ -46,19 +61,35 @@ class _RecorderPageState extends State<RecorderPage> {
     super.dispose();
   }
 
+  void _registerFormListeners() {
+    for (final controller in [
+      _locationController,
+      _descriptionController,
+      _emailController,
+      _phoneController,
+    ]) {
+      controller.addListener(_onFormChanged);
+    }
+  }
+
+  void _onFormChanged() => setState(() {});
+
   Future<void> _initializeCamera() async {
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
 
     _cameraController = CameraController(
       cameras.first,
-      ResolutionPreset.high,
+      ResolutionPreset.low,
       enableAudio: true,
     );
 
     try {
       await _cameraController!.initialize();
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        _startStreaming();
+      }
     } catch (e) {
       _showErrorSnackBar('Tidak dapat mengakses kamera: $e');
     }
@@ -90,6 +121,7 @@ class _RecorderPageState extends State<RecorderPage> {
     try {
       await _cameraController!.startVideoRecording();
       setState(() => _isRecording = true);
+      _latestBlurredFrame = null;
       _showSuccessSnackBar(
         'Kamera aktif',
         'Perekaman video dimulai. Tekan "Hentikan Rekam" untuk mengakhiri.',
@@ -108,6 +140,7 @@ class _RecorderPageState extends State<RecorderPage> {
         _isRecording = false;
         _uploadedVideoPath = file.path;
       });
+      _startStreaming();
       _showSuccessSnackBar(
         'Rekaman selesai',
         'Video berhasil direkam dan siap untuk dikirim',
@@ -136,71 +169,128 @@ class _RecorderPageState extends State<RecorderPage> {
     }
   }
 
+  Future<void> _startStreaming() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+    if (_isStreaming) return;
+
+    try {
+      await _streamingService.connect();
+      await _processedFrameSubscription?.cancel();
+      _processedFrameSubscription = _streamingService.frames.listen((frame) {
+        if (!mounted) return;
+        setState(() => _latestBlurredFrame = frame);
+      });
+
+      _streamingTimer ??=
+          Timer.periodic(_frameInterval, (_) {
+        unawaited(_captureAndSendFrame());
+      });
+
+      if (mounted) {
+        setState(() => _isStreaming = true);
+      } else {
+        _isStreaming = true;
+      }
+    } catch (e) {
+      _showErrorSnackBar('Gagal memulai streaming: $e');
+    }
+  }
+
+  Future<void> _stopStreaming() async {
+    _streamingTimer?.cancel();
+    _streamingTimer = null;
+    await _processedFrameSubscription?.cancel();
+    _processedFrameSubscription = null;
+    await _streamingService.disconnect();
+
+    if (mounted) {
+      setState(() {
+        _isStreaming = false;
+        _latestBlurredFrame = null;
+      });
+    } else {
+      _isStreaming = false;
+      _latestBlurredFrame = null;
+    }
+  }
+
+  Future<void> _captureAndSendFrame() async {
+    if (_isSendingFrame || _cameraController == null) return;
+    if (!_cameraController!.value.isInitialized) return;
+    if (_cameraController!.value.isRecordingVideo) return;
+
+    _isSendingFrame = true;
+    try {
+      final still = await _cameraController!.takePicture();
+      final bytes = await still.readAsBytes();
+      await _streamingService.sendFrame(bytes);
+    } catch (_) {
+      // swallow errors, preview will retry on next tick
+    } finally {
+      _isSendingFrame = false;
+    }
+  }
+
   Future<void> _submitReport() async {
-    if (_locationController.text.isEmpty ||
-        _descriptionController.text.isEmpty ||
-        _emailController.text.isEmpty ||
-        _phoneController.text.isEmpty) {
-      _showErrorSnackBar(
-        'Data tidak lengkap. Semua field wajib diisi (lokasi, deskripsi, email, dan no. telepon)',
-      );
+    if (!_isFormValid) {
+      _showErrorSnackBar('Data tidak lengkap. Isi seluruh field wajib.');
       return;
     }
 
     if (_uploadedVideoPath == null) {
-      _showErrorSnackBar(
-        'Video belum tersedia. Silakan rekam video atau upload berkas terlebih dahulu',
-      );
+      _showErrorSnackBar('Video belum tersedia. Silakan rekam atau upload berkas.');
       return;
     }
 
+    setState(() => _isSubmitting = true);
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final existingVideos = prefs.getString('uploadedVideos') ?? '[]';
-      final videos = List<Map<String, dynamic>>.from(
-        json.decode(existingVideos) as List,
+      final file = XFile(_uploadedVideoPath!);
+      final location = _locationController.text.trim();
+      final description = _descriptionController.text.trim();
+      final email = _emailController.text.trim();
+      final phone = _phoneController.text.trim();
+      final title = 'Laporan $location';
+
+        await _reportSubmissionService.submitReport(
+        video: file,
+        title: title,
+        location: location,
+        description: description,
+        email: email,
+          phone: phone,
       );
-
-      videos.add({
-        'id': DateTime.now().millisecondsSinceEpoch.toString(),
-        'filename':
-            'Laporan_${DateTime.now().toLocal().toString().replaceAll(RegExp(r'[^0-9]'), '_')}.mp4',
-        'uploadDate': DateTime.now().toLocal().toString(),
-        'status': 'new',
-        'blurType': _blurEnabled ? _blurMethod : null,
-        'location': _locationController.text,
-        'description': _descriptionController.text,
-        'email': _emailController.text,
-        'phone': _phoneController.text,
-        'videoPath': _uploadedVideoPath,
-      });
-
-      await prefs.setString('uploadedVideos', json.encode(videos));
 
       _showSuccessSnackBar(
         'Laporan berhasil dikirim!',
-        'Laporan Anda telah masuk ke dashboard admin dan akan segera diproses. Terima kasih atas laporan Anda.',
+        'Video berhasil diunggah ke server dan siap ditinjau tim admin.',
       );
 
-      // Reset form
       setState(() {
         _locationController.clear();
         _descriptionController.clear();
         _emailController.clear();
         _phoneController.clear();
         _uploadedVideoPath = null;
-        _recordedChunks.clear();
       });
-
-      // Navigate back after delay
-      Future.delayed(
-        const Duration(milliseconds: 1500),
-        () => Navigator.of(context).pop(),
-      );
+    } on ApiException catch (e) {
+      _showErrorSnackBar(e.message);
     } catch (e) {
       _showErrorSnackBar('Error saat mengirim laporan: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
   }
+
+  bool get _isFormValid =>
+      _locationController.text.trim().isNotEmpty &&
+      _descriptionController.text.trim().isNotEmpty &&
+      _emailController.text.trim().isNotEmpty &&
+      _phoneController.text.trim().isNotEmpty;
 
   void _showSuccessSnackBar(String title, [String? message]) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -241,6 +331,8 @@ class _RecorderPageState extends State<RecorderPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final canSubmit =
+        _isFormValid && _uploadedVideoPath != null && !_isSubmitting;
 
     return Scaffold(
       body: SafeArea(
@@ -282,7 +374,9 @@ class _RecorderPageState extends State<RecorderPage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+                        color: isDark
+                          ? Colors.white12
+                          : Colors.black.withValues(alpha: 0.05),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
@@ -317,24 +411,15 @@ class _RecorderPageState extends State<RecorderPage> {
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     children: [
-                      SizedBox(
-                        width: double.infinity,
-                        height: 360, // Lebih compact
+                      AspectRatio(
+                        aspectRatio: 16 / 9,
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Container(
-                            color: isDark ? Colors.grey[900] : Colors.grey[200],
-                            child:
-                                _cameraController?.value.isInitialized ?? false
-                                    ? CameraPreview(_cameraController!)
-                                    : const Center(
-                                        child: Text(
-                                          'Klik "Mulai Rekam" untuk merekam video\natau "Upload Berkas" untuk mengunggah file',
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              color: Colors.grey, fontSize: 12),
-                                        ),
-                                      ),
+                          borderRadius: BorderRadius.circular(16),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: isDark ? Colors.grey[900] : Colors.grey[200],
+                            ),
+                            child: _buildPreviewPlaceholder(),
                           ),
                         ),
                       ),
@@ -385,6 +470,25 @@ class _RecorderPageState extends State<RecorderPage> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.visibility_off,
+                            size: 16,
+                            color: isDark ? Colors.tealAccent : Colors.teal,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Blur otomatis aktif dan terekam',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? Colors.white70 : Colors.black54,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -404,7 +508,9 @@ class _RecorderPageState extends State<RecorderPage> {
                         decoration: BoxDecoration(
                           border: Border(
                             bottom: BorderSide(
-                              color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+                                color: isDark
+                                  ? Colors.white12
+                                  : Colors.black.withValues(alpha: 0.05),
                             ),
                           ),
                         ),
@@ -479,7 +585,9 @@ class _RecorderPageState extends State<RecorderPage> {
                             ),
                           ),
                           filled: true,
-                          fillColor: isDark ? Colors.white.withOpacity(0.03) : Colors.black.withOpacity(0.02),
+                            fillColor: isDark
+                              ? Colors.white.withValues(alpha: 0.03)
+                              : Colors.black.withValues(alpha: 0.02),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -530,7 +638,9 @@ class _RecorderPageState extends State<RecorderPage> {
                             ),
                           ),
                           filled: true,
-                          fillColor: isDark ? Colors.white.withOpacity(0.03) : Colors.black.withOpacity(0.02),
+                            fillColor: isDark
+                              ? Colors.white.withValues(alpha: 0.03)
+                              : Colors.black.withValues(alpha: 0.02),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -542,7 +652,9 @@ class _RecorderPageState extends State<RecorderPage> {
                         decoration: BoxDecoration(
                           border: Border(
                             top: BorderSide(
-                              color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+                                color: isDark
+                                  ? Colors.white12
+                                  : Colors.black.withValues(alpha: 0.05),
                             ),
                           ),
                         ),
@@ -615,7 +727,9 @@ class _RecorderPageState extends State<RecorderPage> {
                                   ),
                                 ),
                                 filled: true,
-                                fillColor: isDark ? Colors.white.withOpacity(0.03) : Colors.black.withOpacity(0.02),
+                                fillColor: isDark
+                                  ? Colors.white.withValues(alpha: 0.03)
+                                  : Colors.black.withValues(alpha: 0.02),
                               ),
                             ),
                           ),
@@ -652,7 +766,9 @@ class _RecorderPageState extends State<RecorderPage> {
                                   ),
                                 ),
                                 filled: true,
-                                fillColor: isDark ? Colors.white.withOpacity(0.03) : Colors.black.withOpacity(0.02),
+                                fillColor: isDark
+                                  ? Colors.white.withValues(alpha: 0.03)
+                                  : Colors.black.withValues(alpha: 0.02),
                               ),
                             ),
                           ),
@@ -667,7 +783,9 @@ class _RecorderPageState extends State<RecorderPage> {
                         decoration: BoxDecoration(
                           border: Border(
                             top: BorderSide(
-                              color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+                                color: isDark
+                                  ? Colors.white12
+                                  : Colors.black.withValues(alpha: 0.05),
                             ),
                           ),
                         ),
@@ -677,35 +795,34 @@ class _RecorderPageState extends State<RecorderPage> {
                               width: double.infinity,
                               height: 42,
                               child: ElevatedButton.icon(
-                                onPressed: (_locationController.text.isEmpty ||
-                                          _descriptionController.text.isEmpty ||
-                                          _emailController.text.isEmpty ||
-                                          _phoneController.text.isEmpty)
-                                    ? null  // Disable button if fields are empty
-                                    : _submitReport,
-                                icon: const Icon(Icons.upload_rounded, size: 18),
+                                onPressed: canSubmit ? _submitReport : null,
+                                icon: _isSubmitting
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child:
+                                            CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.upload_rounded, size: 18),
                                 label: Text(
                                   'Kirim Laporan',
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
-                                    color: (_locationController.text.isEmpty ||
-                                           _descriptionController.text.isEmpty ||
-                                           _emailController.text.isEmpty ||
-                                           _phoneController.text.isEmpty)
-                                        ? (isDark ? Colors.white38 : Colors.black38)
-                                        : (isDark ? Colors.black : Colors.white),
+                                    color: canSubmit
+                                        ? (isDark ? Colors.black : Colors.white)
+                                        : (isDark ? Colors.white38 : Colors.black38),
                                   ),
                                 ),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: isDark ? Colors.white : Colors.black,
                                   foregroundColor: isDark ? Colors.black : Colors.white,
-                                  disabledBackgroundColor: isDark 
-                                      ? Colors.white.withOpacity(0.06)
-                                      : Colors.black.withOpacity(0.06),
+                                  disabledBackgroundColor: isDark
+                                      ? Colors.white.withValues(alpha: 0.06)
+                                      : Colors.black.withValues(alpha: 0.06),
                                   disabledForegroundColor: isDark
-                                      ? Colors.white.withOpacity(0.38)
-                                      : Colors.black.withOpacity(0.38),
+                                      ? Colors.white.withValues(alpha: 0.38)
+                                      : Colors.black.withValues(alpha: 0.38),
                                   elevation: 0,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
@@ -713,10 +830,7 @@ class _RecorderPageState extends State<RecorderPage> {
                                 ),
                               ),
                             ),
-                            if (_locationController.text.isEmpty ||
-                                _descriptionController.text.isEmpty ||
-                                _emailController.text.isEmpty ||
-                                _phoneController.text.isEmpty) ...[
+                            if (!_isFormValid) ...[
                               const SizedBox(height: 6),
                               Text(
                                 'Semua field wajib diisi (lokasi, deskripsi, email, dan no. telepon)',
@@ -724,6 +838,17 @@ class _RecorderPageState extends State<RecorderPage> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: isDark ? Colors.red[400] : Colors.red[600],
+                                ),
+                              ),
+                            ] else if (_uploadedVideoPath == null) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                'Rekam atau unggah video sebelum mengirim laporan.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color:
+                                      isDark ? Colors.orange[300] : Colors.orange[700],
                                 ),
                               ),
                             ],
@@ -744,5 +869,50 @@ class _RecorderPageState extends State<RecorderPage> {
           ), // SingleChildScrollView
         ), // SafeArea
       ); // Scaffold
+  }
+
+  Widget _buildPreviewPlaceholder() {
+    if (_cameraController?.value.isInitialized ?? false) {
+      final preview = CameraPreview(_cameraController!);
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          preview,
+          if (_latestBlurredFrame != null)
+            Positioned.fill(
+              child: Image.memory(
+                _latestBlurredFrame!,
+                fit: BoxFit.cover,
+              ),
+            )
+          else ...[
+            ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: preview,
+            ),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.15),
+                    Colors.black.withValues(alpha: 0.05),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
+    return const Center(
+      child: Text(
+        'Klik "Mulai Rekam" untuk merekam video\natau "Upload Berkas" untuk mengunggah file',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    );
   }
 }

@@ -1,5 +1,6 @@
 flask
 flask-socketio
+flask-cors
 eventlet
 opencv-python
 numpy
@@ -7,6 +8,7 @@ python-dotenv
 requests
 matplotlib
 tk
+PyAudio
 fastapi
 uvicorn[standard]
 SQLAlchemy>=2.0
@@ -14,3 +16,4 @@ pymysql>=1.1.0
 python-jose[cryptography]
 passlib[bcrypt]
 pydantic>=2
+python-multipart
