@@ -163,9 +163,3 @@ Catatan keamanan:
 - Wildanul Hakim — Backend.
 - M. Akmal — Frontend.
 - Fauzi Syahril Harahap — UI/UX.
-
-## Lisensi
-Lisensi proyek: (sebutkan lisensi yang relevan, mis. MIT) — tambahkan file `LICENSE` jika perlu.
-
----
-Versi: diperbarui secara ringkas untuk presentasi dan penggunaan pengembangan.
